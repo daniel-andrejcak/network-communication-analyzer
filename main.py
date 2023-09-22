@@ -3,7 +3,6 @@ from scapy.all import rdpcap, raw
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-
 """
 6 bytov je destination MAC adress, 6 bytov je source MAC adress
 2 byty je nejaky type (ipv4, arp) !!!POZOR ak je hodnota mensia ako 0x05DC tak je to length a packet je IEEE 802.3 daco a ked je to viac, tak je to Ethernet 2 a hovori to o type IP protokolu
@@ -65,7 +64,7 @@ def yamlFormat(packet: frame.Frame):
         try:
             dict["src_ip"] = packet.srcIP
             dict["dst_ip"] = packet.dstIP
-        except AttributeError as e:
+        except AttributeError:
             pass
 
         if packet.etherType == "IPv4":
@@ -76,9 +75,8 @@ def yamlFormat(packet: frame.Frame):
                 dict["src_port"] = packet.srcPort
                 dict["dst_port"] = packet.dstPort
                 dict["app_protocol"] = packet.appProtocol
-            except AttributeError as e:
+            except AttributeError:
                 pass
-
 
     
     dict["hexa_frame"] = LiteralScalarString(packet.hexFrame)
@@ -98,6 +96,18 @@ def loadProtocols():
 
     return protocols
 
+def IPv4Senders(packetList: list[frame.Frame]):
+    uniqueSenders = {}
+    for packet in packetList:
+        if packet.etherType == "IPv4":
+            if packet.srcIP in uniqueSenders.keys(): uniqueSenders[packet.srcIP] += 1 
+            else: uniqueSenders[packet.srcIP] = 1
+
+    maxPacketsSent = max(uniqueSenders.values())
+    #vrati vsetky adresy, ktore maju rovnaky - maximalny pocet odoslanych packetov
+    addrForMaxPacketSent = [a for a, value in uniqueSenders.items() if value == maxPacketsSent]
+
+    return uniqueSenders, addrForMaxPacketSent
 
 
 NAME = "PKS2023/24"
@@ -141,7 +151,14 @@ yamlFile = open(PCAPFILE[:-5] + ".yaml", "w")
 
 yaml = YAML()
 
-data = {'name' : NAME, 'pcap_file' : PCAPFILE, 'packets' : [yamlFormat(p) for p in formatedPacketList]}
+packetsSendByNode = [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()]
+
+
+data = {'name' : NAME,
+        'pcap_file' : PCAPFILE,
+        'packets' : [yamlFormat(p) for p in formatedPacketList],
+        "ipv4_senders": [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()],
+        "max_send_packets_by": IPv4Senders(formatedPacketList)[1]}
 
 
 yaml.dump(data, yamlFile)
