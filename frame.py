@@ -133,7 +133,6 @@ class Frame:
 
     #prepis + format IP adries z hex tvaru do normalneho
     def formatIPv4(self, srcIP, dstIP):
-
         self.srcIP = '.'.join([str(int(srcIP[i:i+2], 16)) for i in range(0, len(srcIP), 2)])
         self.dstIP = '.'.join([str(int(dstIP[i:i+2], 16)) for i in range(0, len(dstIP), 2)])
 
