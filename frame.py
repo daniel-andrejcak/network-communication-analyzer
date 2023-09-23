@@ -103,7 +103,9 @@ class Frame:
         tempSrcIP = self.rawPacket[12*SIZEOFBYTE:16*SIZEOFBYTE]
         tempDstIP = self.rawPacket[16*SIZEOFBYTE:20*SIZEOFBYTE]
 
-        self.rawPacket = self.rawPacket[20*SIZEOFBYTE:]
+        #odstrani ip header, ktory moze byt od 20B do 60B
+        headerLength = 4*int(self.rawPacket[1], 16)
+        self.rawPacket = self.rawPacket[headerLength*SIZEOFBYTE:]
 
         if self.protocol in list(protocols["ipv4_protocol"].keys()):
             self.protocol = protocols["ipv4_protocol"][self.protocol]
@@ -114,7 +116,6 @@ class Frame:
         else:
             self.protocol = "unknown"
         
-        #odstrani ip header....ale ipv4 moze byt az 60B, zatial funguje pre 20B, ale 2. byte je header size takze sa to da zistit
 
         self.formatIPv4(tempSrcIP, tempDstIP)
     
