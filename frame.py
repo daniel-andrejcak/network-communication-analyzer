@@ -131,14 +131,13 @@ class Frame:
 
         self.formatIPv6(tempSrcIP, tempDstIP)
 
-    #prepis IP adries z hex tvaru do normalneho
-    #asi sa to takto nema robit, ale to sa domysli casom
+    #prepis + format IP adries z hex tvaru do normalneho
     def formatIPv4(self, srcIP, dstIP):
-        self.srcIP = str(int(srcIP[0:SIZEOFBYTE], 16)) + '.' + str(int(srcIP[SIZEOFBYTE:2*SIZEOFBYTE], 16)) + '.' + str(int(srcIP[2*SIZEOFBYTE:3*SIZEOFBYTE], 16)) + '.' + str(int(srcIP[3*SIZEOFBYTE:4*SIZEOFBYTE], 16))
 
-        self.dstIP = str(int(dstIP[0:SIZEOFBYTE], 16)) + '.' + str(int(dstIP[SIZEOFBYTE:2*SIZEOFBYTE], 16)) + '.' + str(int(dstIP[2*SIZEOFBYTE:3*SIZEOFBYTE], 16)) + '.' + str(int(dstIP[3*SIZEOFBYTE:4*SIZEOFBYTE], 16))
+        self.srcIP = '.'.join([str(int(srcIP[i:i+2], 16)) for i in range(0, len(srcIP), 2)])
+        self.dstIP = '.'.join([str(int(dstIP[i:i+2], 16)) for i in range(0, len(dstIP), 2)])
 
-    #tu sa to da zrobit jak clovek lebo to netreba prepisovat do normalnych cisel, ale staci ked to ostane v hex
+    #tu sa to da zrobit jak normalny clovek lebo to netreba prepisovat do normalnych cisel, ale staci ked to ostane v hex
     def formatIPv6(self, srcIP, dstIP):
         self.srcIP = ':'.join([srcIP[i:i+4] for i in range(0, len(srcIP), 4)])
         self.dstIP = ':'.join([dstIP[i:i+4] for i in range(0, len(dstIP), 4)])
