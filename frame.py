@@ -19,8 +19,13 @@ class Frame:
         self.hexFrame = [self.rawPacket[i:i+2] for i in range(0, len(self.rawPacket), 2)]
         self.hexFrame = '\n'.join([' '.join(self.hexFrame[i:i+16]) for i in range(0, len(self.hexFrame), 16)])
 
+        self.hexFrame = self.hexFrame.upper()
+
     #extrahuje MAC adresu a vlozi " : " medzi jednotlive byty adresy
-    def makeMACAddr(self):         
+    def makeMACAddr(self):
+
+        if(self.rawPacket[:6*SIZEOFBYTE] == "01000c000000"): self.rawPacket = self.rawPacket[26*SIZEOFBYTE:]
+
         self.dstMac = ''.join([self.rawPacket[i:i+SIZEOFBYTE] + ":" for i in range(0, 6*SIZEOFBYTE, 2)])[:-1]
         self.rawPacket = self.rawPacket[6*SIZEOFBYTE:]
 
@@ -38,12 +43,12 @@ class Frame:
 
             self.determimeEtherType()
 
-
         else:
             self.rawPacket = self.rawPacket[2*SIZEOFBYTE:]
 
             self.frameType = "IEEE 802.3"
             self.determineIEEE()
+
 
     #dalej urci typ IEEE 802.3
     def determineIEEE(self):
@@ -153,8 +158,10 @@ class Frame:
         self.srcPort = int(self.rawPacket[:2*SIZEOFBYTE], 16)
         self.dstPort = int(self.rawPacket[2*SIZEOFBYTE:4*SIZEOFBYTE], 16)
         
-        if self.srcPort in list(protocols["udp_protocol"].keys()): self.appProtocol = protocols["udp_protocol"][self.srcPort]
-        elif self.dstPort in list(protocols["udp_protocol"].keys()): self.appProtocol = protocols["udp_protocol"][self.dstPort]
+        if self.srcPort in list(protocols["udp_protocol"].keys()):
+            self.appProtocol = protocols["udp_protocol"][self.srcPort]
+        elif self.dstPort in list(protocols["udp_protocol"].keys()): 
+            self.appProtocol = protocols["udp_protocol"][self.dstPort]
 
     #vrati formatovany text vhodny do vystupu
     '''def getFormatedDict(self):
