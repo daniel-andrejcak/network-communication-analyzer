@@ -1,7 +1,12 @@
 import frame
-from scapy.all import rdpcap, raw
+from scapy.all import rdpcap
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
+
+NAME = "PKS2023/24"
+PCAPFILE = "trace-26.pcap"
+
+
 
 """
 6 bytov je destination MAC adress, 6 bytov je source MAC adress
@@ -43,6 +48,8 @@ v trace26 82 je ISL...a tam sme skoncili a tu je problem chlapci
 v trace27 325 je LLDP 
 
 v trace27 je 1532 unknown ether type
+
+v trace4 je nekompletna komunikacia - tcp filter
 """
 
 def yamlFormat(packet: frame.Frame):
@@ -74,7 +81,12 @@ def yamlFormat(packet: frame.Frame):
             try:
                 dict["src_port"] = packet.srcPort
                 dict["dst_port"] = packet.dstPort
-                dict["app_protocol"] = packet.appProtocol
+
+                try:
+                    dict["app_protocol"] = packet.appProtocol
+                except AttributeError:
+                    pass
+
             except AttributeError:
                 pass
 
@@ -83,44 +95,26 @@ def yamlFormat(packet: frame.Frame):
 
     return dict
 
-def loadProtocols():
-    PROTOCOLSFILE = "protocols.yaml"
-
-    protocolsFile = open(PROTOCOLSFILE, "r")
-
-    yaml = YAML()
-
-    protocols = dict(yaml.load(protocolsFile))
-
-    protocolsFile.close()
-
-    return protocols
-
 def IPv4Senders(packetList: list[frame.Frame]):
     uniqueSenders = {}
     for packet in packetList:
-        if packet.etherType == "IPv4":
+        if packet.frameType == "ETHERNET II" and packet.etherType == "IPv4":
             if packet.srcIP in uniqueSenders.keys(): uniqueSenders[packet.srcIP] += 1 
             else: uniqueSenders[packet.srcIP] = 1
 
     maxPacketsSent = max(uniqueSenders.values())
+
     #vrati vsetky adresy, ktore maju rovnaky - maximalny pocet odoslanych packetov
-    addrForMaxPacketSent = [a for a, value in uniqueSenders.items() if value == maxPacketsSent]
+    addrForMaxPacketSent = [address for address, packetsSent in uniqueSenders.items() if packetsSent == maxPacketsSent]
 
     return uniqueSenders, addrForMaxPacketSent
 
-
-NAME = "PKS2023/24"
-PCAPFILE = "eth-1.pcap"
-
-#nacitanie protokolov z externeho yaml suboru
-protocols = loadProtocols()
 
 
 #otvorenie pcap suboru a nacitanie jednotlivych packetov do list
 packets = rdpcap(PCAPFILE)
 
-packetList = [raw(p) for p in packets]
+packetList = [bytes(p) for p in packets]
 
 formatedPacketList = []
 for i in range(0, len(packetList)):
@@ -128,39 +122,26 @@ for i in range(0, len(packetList)):
 
 
 
-#formatovanie binarneho tvaru do stringu -> 16bytov v jednom riadku
-"""frameHexList = []
-for rawPacket in packetList:
-    frameHex = [rawPacket.hex()[i:i+2] for i in range(0, len(rawPacket.hex()), 2)]
-    frameHex = '\n'.join([' '.join(frameHex[i:i+16]) for i in range(0, len(frameHex), 16)])
-
-    frameHexList.append(LiteralScalarString(frameHex))
-
-
-#formatovanie do tvaru vhodneho na vypis do yaml suboru
-formatedPackets = []
-for i in range(0, len(frameHexList)):
-    tempDict = {"frame_number": i+1,
-                "hexa_frame": frameHexList[i]}
-    
-    formatedPackets.append(tempDict)"""
-
 
 #zapisanie do suboru yaml
 yamlFile = open(PCAPFILE[:-5] + ".yaml", "w")
 
-yaml = YAML()
-
-packetsSendByNode = [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()]
-
-
 data = {'name' : NAME,
         'pcap_file' : PCAPFILE,
-        'packets' : [yamlFormat(p) for p in formatedPacketList],
-        "ipv4_senders": [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()],
-        "max_send_packets_by": IPv4Senders(formatedPacketList)[1]}
+        'packets' : [yamlFormat(p) for p in formatedPacketList]}
 
+YAML().dump(data, yamlFile)
+yamlFile.write("\n")
 
-yaml.dump(data, yamlFile)
+data = {"ipv4_senders": [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()]}
+
+YAML().dump(data, yamlFile)
+yamlFile.write("\n")
+
+data = {"max_send_packets_by": IPv4Senders(formatedPacketList)[1]}
+
+YAML().dump(data, yamlFile)
+yamlFile.write("\n")
+
 
 yamlFile.close()
