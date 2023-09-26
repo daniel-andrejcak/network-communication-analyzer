@@ -1,50 +1,15 @@
 import frame
-from scapy.all import rdpcap
+import argparse
+import dpkt
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-NAME = "PKS2023/24"
-PCAPFILE = "trace-26.pcap"
-
-
-
 """
-6 bytov je destination MAC adress, 6 bytov je source MAC adress
-2 byty je nejaky type (ipv4, arp) !!!POZOR ak je hodnota mensia ako 0x05DC tak je to length a packet je IEEE 802.3 daco a ked je to viac, tak je to Ethernet 2 a hovori to o type IP protokolu
-moze byt padding abo trailer abo daco take na koncu
-
-IP -> prve 4 bity su verzia IP, dalsie 4 su header length - to znamena dlzku IP v bytoch
-             2. byte je daco
-2 byty su dlzka IP + zvysne vrstvy pod (TCP a mozno este daco)
-2 byty su nejaky identifikator
-2 byty oznacuju fragmentaciu - prve 3 bity urcuju ci sa fragmentuje, zvysok je fragment offset???
-4 byty teraz skip - tam sa urci co je "nasledujuci" protokol
-IPv4 source (4byty), destination(4byty)
-
-ARP -> 2byty hardware type, 2byty protocol type (IPv4 a tak vole), 1byt hardware size, 1byt protocol size, 2byty OPCode(request, reply, ...), 6byty sender MAC, 4byty sender IP, 6byty target MAC, 4byty target IP
-
-IPv6 -> 4byty ignor, 2byty payload length (velkost od ipv6 header - to co je po ipv6(pre blbcov)), 1byte next header urcuje co nasleduje (napriklad ze dalej je UDP a tak vis jako), 1byte hop limit (netusim),.....(8byte skip)  16byty source adress,  16byty destination adress
-
-LLDP -> 
-
-
-
-TCP -> 2byty source port (16^4 = 65536 roznychh portov existuje), 2byty destination port
-4byty sequence number ???
-4byty acknowledgement number ???
-4bity TCP length
-12bitov flags (3 su reserved, 9 su nejake flagy)
-2 byty nejaky window ???
-2 byty TCP checksum
-2 byty urgent pointer
-
-UDP -> 2byty source port 2byty destination port 2byty length 2byty checksum
-
 v trace20 je IEEE 802.3 raw
 v trace2 je daco s IEEE 802.3 s LLC
 v trace26 je IEEE 802.3 LLC a SNAP
 
-v trace26 82 je ISL...a tam sme skoncili a tu je problem chlapci
+v trace26 82 je ISL
 v trace27 325 je LLDP 
 
 v trace27 je 1532 unknown ether type
@@ -52,38 +17,41 @@ v trace27 je 1532 unknown ether type
 v trace4 je nekompletna komunikacia - tcp filter
 """
 
-def yamlFormat(packet: frame.Frame):
-    dict = {"frame_number" : packet.frame_number,
+def yamlFormat(packet: frame.Frame, switch=None):
+    tempDict = {"frame_number" : packet.frame_number,
             "frame_type" : packet.frameType,
             "len_frame_pcap" : packet.length,
-            "len_frame_medium" : packet.length + 4,
+            "len_frame_medium" : max(64, packet.length + 4),
             "src_mac" : packet.srcMac,
             "dst_mac" : packet.dstMac,
         }
     
     if packet.frameType == "IEEE 802.3 LLC":
-        dict["sap"] = packet.sap
+        tempDict["sap"] = packet.sap
     elif packet.frameType == "IEEE 802.3 LLC & SNAP":
-        dict["pid"] = packet.pid
+        tempDict["pid"] = packet.pid
     elif packet.frameType == "ETHERNET II":
-        dict["ether_type"] = packet.etherType
+        tempDict["ether_type"] = packet.etherType
+
+        #vypis len pri prepinaci ARP
+        if switch == "ARP": tempDict["arp_opcode"] = packet.opCode
 
         try:
-            dict["src_ip"] = packet.srcIP
-            dict["dst_ip"] = packet.dstIP
+            tempDict["src_ip"] = packet.srcIP
+            tempDict["dst_ip"] = packet.dstIP
         except AttributeError:
             pass
 
         if packet.etherType == "IPv4":
                 
-            dict["protocol"] = packet.protocol
+            tempDict["protocol"] = packet.protocol
 
             try:
-                dict["src_port"] = packet.srcPort
-                dict["dst_port"] = packet.dstPort
+                tempDict["src_port"] = packet.srcPort
+                tempDict["dst_port"] = packet.dstPort
 
                 try:
-                    dict["app_protocol"] = packet.appProtocol
+                    tempDict["app_protocol"] = packet.appProtocol
                 except AttributeError:
                     pass
 
@@ -91,9 +59,10 @@ def yamlFormat(packet: frame.Frame):
                 pass
 
     
-    dict["hexa_frame"] = LiteralScalarString(packet.hexFrame)
-
-    return dict
+    tempDict["hexa_frame"] = LiteralScalarString(packet.hexFrame)
+    
+    
+    return tempDict
 
 def IPv4Senders(packetList: list[frame.Frame]):
     uniqueSenders = {}
@@ -102,46 +71,153 @@ def IPv4Senders(packetList: list[frame.Frame]):
             if packet.srcIP in uniqueSenders.keys(): uniqueSenders[packet.srcIP] += 1 
             else: uniqueSenders[packet.srcIP] = 1
 
-    maxPacketsSent = max(uniqueSenders.values())
+    try:
+        maxPacketsSent = max(uniqueSenders.values())
+    except ValueError:
+        pass 
 
     #vrati vsetky adresy, ktore maju rovnaky - maximalny pocet odoslanych packetov
     addrForMaxPacketSent = [address for address, packetsSent in uniqueSenders.items() if packetsSent == maxPacketsSent]
 
     return uniqueSenders, addrForMaxPacketSent
 
-
-
 #otvorenie pcap suboru a nacitanie jednotlivych packetov do list
-packets = rdpcap(PCAPFILE)
+def loadFrames():    
+    f = open(PCAPFILE, 'rb')
+    pcap = dpkt.pcap.Reader(f)
 
-packetList = [bytes(p) for p in packets]
+    frameList = [bytes(p) for _, p in pcap]
 
-formatedPacketList = []
-for i in range(0, len(packetList)):
-    formatedPacketList.append(frame.Frame(i+1, packetList[i]))
+    f.close()
 
+    formatedFrameList = []
+    for i in range(0, len(frameList)):
+        formatedFrameList.append(frame.Frame(i+1, frameList[i]))
 
-
+    return formatedFrameList
 
 #zapisanie do suboru yaml
-yamlFile = open(PCAPFILE[:-5] + ".yaml", "w")
+#ak je subor spusteny bez prepinaca - uloha 1. - 3.
+def defaultWriteYaml(frameList: list[frame.Frame]):
+    yamlFile = open(PCAPFILE[:-5] + ".yaml", "w")
+    yaml = YAML()
 
-data = {'name' : NAME,
-        'pcap_file' : PCAPFILE,
-        'packets' : [yamlFormat(p) for p in formatedPacketList]}
+    data = {'name' : NAME,
+            'pcap_name' : PCAPFILE,
+            'packets' : [yamlFormat(p) for p in frameList]}
 
-YAML().dump(data, yamlFile)
-yamlFile.write("\n")
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
 
-data = {"ipv4_senders": [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(formatedPacketList)[0]).items()]}
+    data = {"ipv4_senders": [{"node": node, "number_of_sent_packets": packets} for node, packets in (IPv4Senders(frameList)[0]).items()]}
 
-YAML().dump(data, yamlFile)
-yamlFile.write("\n")
+    YAML().dump(data, yamlFile)
+    yamlFile.write("\n")
 
-data = {"max_send_packets_by": IPv4Senders(formatedPacketList)[1]}
+    data = {"max_send_packets_by": IPv4Senders(frameList)[1]}
 
-YAML().dump(data, yamlFile)
-yamlFile.write("\n")
+    YAML().dump(data, yamlFile)
+    yamlFile.write("\n")
 
 
-yamlFile.close()
+    yamlFile.close()
+
+#doplnenie opcode do ARP packetov
+def getOpCode(packet: frame.Frame):
+    if int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0001:
+            packet.opCode = "REQUEST"
+    elif int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:
+        packet.opCode = "REPLY"
+
+    return packet
+
+def arpSwitch(packetList: list[frame.Frame]):
+    #vyfiltrovanie ARP packetov
+    packetList = [getOpCode(packet) for packet in packetList if packet.etherType == "ARP"]
+    
+    commsDict = {}
+    partialCommsDict = {}
+
+    for packet in packetList:
+        if packet.opCode == "REQUEST":
+            if commsDict.get(packet.srcIP + " " + packet.dstIP) is None:
+                commsDict[packet.srcIP + " " + packet.dstIP] = [packet]
+
+            elif commsDict.get(packet.srcIP + " " + packet.dstIP) is not None:
+                #ak je posledny packet v tejto komunikacii REQUEST, znamena to ze nema k sebe REPLY, preto ho odstrani a nahradi aktualnym REQUEST
+                if commsDict.get(packet.srcIP + " " + packet.dstIP)[-1].opCode == "REQUEST":
+                    commsDict.get(packet.srcIP + " " + packet.dstIP)[-1] = packet
+
+                #ak je v komunikacii posledny packet REPLY, tak pridaj do komuniakacie REQUEST
+                else:
+                    commsDict.get(packet.dstIP + " " + packet.srcIP).append(packet)
+
+        elif packet.opCode == "REPLY":
+            #ak najde request v zozname, tak tam priradi reply - kompletna komunikacia
+            if commsDict.get(packet.dstIP + " " + packet.srcIP) is not None:
+                commsDict.get(packet.dstIP + " " + packet.srcIP).append(packet)
+
+            elif partialCommsDict.get(packet.dstIP + " " + packet.srcIP) is not None:
+                (partialCommsDict.get(packet.dstIP + " " + packet.srcIP)).append(packet)
+
+            else:
+                partialCommsDict[packet.srcIP + " " + packet.dstIP] = [packet]
+
+    arpWriteYaml(commsDict.values(), partialCommsDict.values())
+
+#vypis do yaml pre prepinac ARP
+def arpWriteYaml(comms, partialComms):
+    yamlFile = open(PCAPFILE[:-5] + "-ARP.yaml", "w")
+    yaml = YAML()
+
+    data = {'name' : NAME,
+            'pcap_name' : PCAPFILE,
+            "filter_name" : "ARP",
+            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p, "ARP") for p in com]} for i, com in enumerate(comms)]
+            }
+
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
+
+    temp = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p, "ARP") for p in com]} for i, com in enumerate(partialComms)]}
+
+    yaml.dump(temp, yamlFile)
+
+    yamlFile.close()
+
+
+NAME = "PKS2023/24"
+PCAPFILE = "trace-27.pcap"
+SIZEOFBYTE = 2
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="zvolte prepinac")
+    parser.add_argument("-p", type=str)
+
+    selectedProtocol = parser.parse_args()
+    
+
+
+
+    frames = loadFrames()
+
+    if selectedProtocol.p is None:
+        print("standard yaml output")
+        defaultWriteYaml(frames)
+    elif selectedProtocol.p == "TCP":
+        print("TCP")
+
+    elif selectedProtocol.p == "UDP":
+        print("UDP")
+    
+    elif selectedProtocol.p == "ICMP":
+        print("ICMP")
+    
+    elif selectedProtocol.p == "ARP":
+        arpSwitch(frames)
+
+        
+
+    
+
+
