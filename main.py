@@ -3,6 +3,8 @@ import argparse
 import dpkt
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
+from scapy.all import rdpcap
+
 
 """
 v trace20 je IEEE 802.3 raw
@@ -82,13 +84,10 @@ def IPv4Senders(packetList: list[frame.Frame]):
     return uniqueSenders, addrForMaxPacketSent
 
 #otvorenie pcap suboru a nacitanie jednotlivych packetov do list
-def loadFrames():    
-    f = open(PCAPFILE, 'rb')
-    pcap = dpkt.pcap.Reader(f)
+def loadFrames():
+    frames = rdpcap(PCAPFILE)
+    frameList = [bytes(p) for p in frames]
 
-    frameList = [bytes(p) for _, p in pcap]
-
-    f.close()
 
     formatedFrameList = []
     for i in range(0, len(frameList)):
@@ -133,7 +132,7 @@ def getOpCode(packet: frame.Frame):
 
 def arpSwitch(packetList: list[frame.Frame]):
     #vyfiltrovanie ARP packetov
-    packetList = [getOpCode(packet) for packet in packetList if packet.etherType == "ARP"]
+    packetList = [getOpCode(packet) for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
     
     commsDict = {}
     partialCommsDict = {}
@@ -146,6 +145,7 @@ def arpSwitch(packetList: list[frame.Frame]):
             elif commsDict.get(packet.srcIP + " " + packet.dstIP) is not None:
                 #ak je posledny packet v tejto komunikacii REQUEST, znamena to ze nema k sebe REPLY, preto ho odstrani a nahradi aktualnym REQUEST
                 if commsDict.get(packet.srcIP + " " + packet.dstIP)[-1].opCode == "REQUEST":
+                    partialCommsDict.update({packet.srcIP + " " + packet.dstIP : [commsDict.get(packet.srcIP + " " + packet.dstIP)[-1]]})
                     commsDict.get(packet.srcIP + " " + packet.dstIP)[-1] = packet
 
                 #ak je v komunikacii posledny packet REPLY, tak pridaj do komuniakacie REQUEST
