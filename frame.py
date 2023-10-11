@@ -6,8 +6,8 @@ SIZEOFBYTE = 2
     metody tejto triedy sluzia na ziskanie informacii(uloha 1, 2) z hexagulasu o jednotlivych ramcoch"""
 class Frame:
 
-    def __init__(self, frame_number, rawPacket):
-        self.frame_number = frame_number
+    def __init__(self, frameNumber, rawPacket):
+        self.frameNumber = frameNumber
         self.length = len(rawPacket)
         self.rawPacket = rawPacket.hex()
 
@@ -131,6 +131,7 @@ class Frame:
         tempDstIP = self.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
         
         self.formatIPv4(tempSrcIP, tempDstIP)
+        self.getOpCode()
    
     def getIPFromIPv6(self):
         tempSrcIP = self.rawPacket[8*SIZEOFBYTE:24*SIZEOFBYTE]
@@ -167,3 +168,9 @@ class Frame:
             self.appProtocol = protocols["udp_protocol"][self.dstPort]
 
 
+    #doplnenie opcode do ARP packetov
+    def getOpCode(self):
+        if int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0001:
+                self.opCode = "REQUEST"
+        elif int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:
+            self.opCode = "REPLY"

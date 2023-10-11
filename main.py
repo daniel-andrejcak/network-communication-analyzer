@@ -20,7 +20,7 @@ def loadFrames():
 
 #vytvorenie dict s udajmi o kazdom ramci, vo formate vhodnom na vypis do yaml
 def yamlFormat(packet: frame.Frame, switch=None):
-    tempDict = {"frame_number" : packet.frame_number,
+    tempDict = {"frame_number" : packet.frameNumber,
             "len_frame_pcap" : packet.length,
             "len_frame_medium" : max(64, packet.length + 4),
             "frame_type" : packet.frameType,
@@ -119,19 +119,10 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
 
 
 
-"""funkcie arpSwitch, arpWriteYaml, getOpCode este nefunguju spravne"""
-#doplnenie opcode do ARP packetov
-def getOpCode(packet: frame.Frame):
-    if int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0001:
-            packet.opCode = "REQUEST"
-    elif int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:
-        packet.opCode = "REPLY"
-
-    return packet
 
 def arpSwitch(packetList: list[frame.Frame]):
     #vyfiltrovanie ARP packetov
-    packetList = [getOpCode(packet) for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
+    packetList = [packet for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
     
     commsDict = {}
     partialCommsRequest = []
@@ -168,7 +159,6 @@ def arpSwitch(packetList: list[frame.Frame]):
 
     arpWriteYaml(commsDict.values(), partialComms)
 
-
 #vypis do yaml pre prepinac ARP
 def arpWriteYaml(comms, partialComms):
     yamlFile = open(PCAPFILE[:-5] + "-ARP.yaml", "w")
@@ -193,13 +183,105 @@ def arpWriteYaml(comms, partialComms):
     yaml.dump(temp, yamlFile)
 
     yamlFile.close()
+    
+
+#tftp ma 2 byty header a potom data
+def tftpSwitch(packetList: list[frame.Frame]):
+
+    commsDict = {}
+    partialCommsDict = {}
+
+    udpPackets = []
+
+    #vyfiltruje vsetky udp packety
+    for packet in packetList:
+        if packet.frameType == "ETHERNET II" and packet.etherType == "IPv4" and packet.protocol == "UDP":
+            udpPackets.append(packet)
+
+
+    #najde vsetky tftp packety
+    tftpPackets = [packet for packet in udpPackets if (hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP")]
+    tftpIP = [packet.srcIP + packet.dstIP for packet in tftpPackets]
+    tftpDataPorts = []
+    index = [] #index bude src a dst port tftp komunikacie
+    
+    for packet in tftpPackets:
+        index.append(packet.srcPort)
+
+        if packet.frameNumber < len(packetList) and packetList[packet.frameNumber].dstPort == packet.srcPort:
+            index.append(packetList[packet.frameNumber].srcPort)
+
+            tftpDataPorts.append(index)
+
+            index = []
+
+    #odstrani vsetky ramce pred prvym tftp - netreba ich
+    packetList = packetList[tftpPackets[0].frameNumber - 1:]
+
+    comm = []
+    index = -1
+    ack = False #flag, aby to zobralo aj posledny ack packet v konecnej komunikacii
+
+    for packet in packetList:
+
+
+        if packet in tftpPackets:
+            comm.append(packet)
+            index += 1
+            size = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+        elif hasattr(packet, "srcPort") and packet.srcPort in tftpDataPorts[index] and packet.dstPort in tftpDataPorts[index]:
+            comm.append(packet)
+            
+            if ack:
+                commsDict[str(tftpDataPorts[index][0]) + str(tftpDataPorts[index][1])] = comm
+                comm = []
+
+                ack = False
+
+                
+            #8 a 9 byte su opcode
+            opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
+
+            #error opCode
+            if opCode == 0x0005:
+                partialCommsDict[str(tftpDataPorts[index][0]) + str(tftpDataPorts[index][1])] = comm
+                comm = []
+
+            #ak je packet s mensou velkostou ako prvy packet v tftp komunikacii - ukoncenie komunikacie    
+            elif opCode == 0x0003 and int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) < size:
+                ack = True
+
+        
+
+
+    tftpWriteYaml(commsDict.values(),  partialCommsDict.values())
+
+def tftpWriteYaml(comms, partialComms):
+    yamlFile = open(PCAPFILE[:-5] + "-TFTP.yaml", "w")
+    yaml = YAML()
+
+    data = {'name' : NAME,
+            'pcap_name' : PCAPFILE,
+            "filter_name" : "TFTP",
+            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
+            }
+
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
+
+    data = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(partialComms)]}
+
+    yaml.dump(data, yamlFile)
+
+    yamlFile.close()
 
 
 
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-27.pcap"
+PCAPFILE = "trace-15.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
@@ -210,24 +292,26 @@ if __name__ == '__main__':
     
     #nacitanie z pcap suboru
     frames = loadFrames()
+    
 
     #vypis do yaml
     if selectedProtocol.p is None:
         print("standard yaml output")
-
         defaultWriteYaml(frames)
 
-    #prepinace este nefunguju
+    #niektore prepinace este nefunguju
     elif selectedProtocol.p == "TCP":
         print("TCP")
 
-    elif selectedProtocol.p == "UDP":
-        print("UDP")
-    
+    elif selectedProtocol.p == "TFTP":
+        print("TFTP")
+        tftpSwitch(frames)
+
     elif selectedProtocol.p == "ICMP":
         print("ICMP")
     
     elif selectedProtocol.p == "ARP":
+        print("ARP switch")
         arpSwitch(frames)
 
         
