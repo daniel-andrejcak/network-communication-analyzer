@@ -2,6 +2,8 @@ from protocols import protocols #import dictionary obsahujuci protokoly nacitane
 
 SIZEOFBYTE = 2
 
+"""trieda sluzi vytvorenie objektov reprezentujuce jednotlive ramce
+    metody tejto triedy sluzia na ziskanie informacii(uloha 1, 2) z hexagulasu o jednotlivych ramcoch"""
 class Frame:
 
     def __init__(self, frame_number, rawPacket):
@@ -18,13 +20,15 @@ class Frame:
     def makeHexFrame(self): 
         self.hexFrame = [self.rawPacket[i:i+2] for i in range(0, len(self.rawPacket), 2)]
         self.hexFrame = '\n'.join([' '.join(self.hexFrame[i:i+16]) for i in range(0, len(self.hexFrame), 16)])
+        self.hexFrame += "\n" #musi tu byt lebo ho pojebe inak
 
         self.hexFrame = self.hexFrame.upper()
 
     #extrahuje MAC adresu a vlozi " : " medzi jednotlive byty adresy
     def makeMACAddr(self):
-
-        if(self.rawPacket[:6*SIZEOFBYTE] == "01000c000000"): self.rawPacket = self.rawPacket[26*SIZEOFBYTE:]
+        #zisti ci obsahuje ISL header a preskoci ho
+        if(int(self.rawPacket[:6*SIZEOFBYTE], 16) == 0x01000c000000):
+            self.rawPacket = self.rawPacket[26*SIZEOFBYTE:]
 
         self.dstMac = ''.join([self.rawPacket[i:i+SIZEOFBYTE] + ":" for i in range(0, 6*SIZEOFBYTE, 2)])[:-1]
         self.rawPacket = self.rawPacket[6*SIZEOFBYTE:]
@@ -32,42 +36,40 @@ class Frame:
         self.srcMac = ''.join([self.rawPacket[i:i+SIZEOFBYTE] + ":" for i in range(0, 6*SIZEOFBYTE, 2)])[:-1]
         self.rawPacket = self.rawPacket[6*SIZEOFBYTE:]
 
+        self.dstMac = self.dstMac.upper()
+        self.srcMac = self.srcMac.upper()
+
     #urci ci typ ramca
     def determineFrameType(self):
+        #toto pole je type(ethernetII) alebo length(ieee802.3)
         frameTypeField = self.rawPacket[:2*SIZEOFBYTE]
-
         frameTypeField = int(frameTypeField, 16)
 
-        if(frameTypeField > 1500):
+        
+        if(frameTypeField > 0x5DC):
+            #pole type je treba na urcenie ether_type a preto sa neodstrani ako pri ieee 802.3
             self.frameType = "ETHERNET II"
-
             self.determimeEtherType()
 
         else:
-            self.rawPacket = self.rawPacket[2*SIZEOFBYTE:]
+            #pole length uz netreba, preto sa odstrani
+            self.rawPacket = self.rawPacket[2*SIZEOFBYTE:] #
 
             self.frameType = "IEEE 802.3"
             self.determineIEEE()
 
-
     #dalej urci typ IEEE 802.3
     def determineIEEE(self):
-        if self.rawPacket[:SIZEOFBYTE] == self.rawPacket[SIZEOFBYTE:2*SIZEOFBYTE] and self.rawPacket[:SIZEOFBYTE] != "ff":
+        if int(self.rawPacket[:SIZEOFBYTE], 16) != 0xff:
             
             self.frameType += " LLC"
 
             hexSap = int(self.rawPacket[:SIZEOFBYTE], 16)
 
-            #odstranenie SSAP, DSAP, Control Field
-            self.rawPacket = self.rawPacket[3*SIZEOFBYTE:]
-
             if hexSap == 0xaa:
                 self.frameType += " & SNAP"
 
-                #odstranenie Organization code
-                self.rawPacket = self.rawPacket[3*SIZEOFBYTE:]
-
-                hexPid = int(self.rawPacket[:2*SIZEOFBYTE], 16)
+                hexPid = int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE], 16)
 
                 if hexPid in list(protocols["pid"].keys()):
                     self.pid = protocols["pid"][hexPid]
@@ -136,23 +138,24 @@ class Frame:
 
         self.formatIPv6(tempSrcIP, tempDstIP)
 
-    #prepis + format IP adries z hex tvaru do normalneho
+    #prepis + format IP adries
     def formatIPv4(self, srcIP, dstIP):
         self.srcIP = '.'.join([str(int(srcIP[i:i+2], 16)) for i in range(0, len(srcIP), 2)])
         self.dstIP = '.'.join([str(int(dstIP[i:i+2], 16)) for i in range(0, len(dstIP), 2)])
 
-    #tu sa to da zrobit jak normalny clovek lebo to netreba prepisovat do normalnych cisel, ale staci ked to ostane v hex
     def formatIPv6(self, srcIP, dstIP):
         self.srcIP = ':'.join([srcIP[i:i+4] for i in range(0, len(srcIP), 4)])
         self.dstIP = ':'.join([dstIP[i:i+4] for i in range(0, len(dstIP), 4)])
 
-    #zisti porty, pripadne nazov aplikacneho protokolu
+    #vypise porty, pripadne zisti nazov aplikacneho protokolu
     def getTCPPorts(self):
         self.srcPort = int(self.rawPacket[:2*SIZEOFBYTE], 16)
         self.dstPort = int(self.rawPacket[2*SIZEOFBYTE:4*SIZEOFBYTE], 16)
         
-        if self.srcPort in list(protocols["tcp_protocol"].keys()): self.appProtocol = protocols["tcp_protocol"][self.srcPort]
-        elif self.dstPort in list(protocols["tcp_protocol"].keys()): self.appProtocol = protocols["tcp_protocol"][self.dstPort]
+        if self.srcPort in list(protocols["tcp_protocol"].keys()):
+            self.appProtocol = protocols["tcp_protocol"][self.srcPort]
+        elif self.dstPort in list(protocols["tcp_protocol"].keys()):
+            self.appProtocol = protocols["tcp_protocol"][self.dstPort]
 
     def getUDPPorts(self):
         self.srcPort = int(self.rawPacket[:2*SIZEOFBYTE], 16)
@@ -163,17 +166,4 @@ class Frame:
         elif self.dstPort in list(protocols["udp_protocol"].keys()): 
             self.appProtocol = protocols["udp_protocol"][self.dstPort]
 
-    #vrati formatovany text vhodny do vystupu
-    '''def getFormatedDict(self):
-        self.outputDict = {"frame_number" : self.frame_number,
-                           "frame_type" : self.frameType,
-                           "len_frame_pcap" : self.length,
-                           "src_mac" : self.src_mac,
-                           "dst_mac" : self.dst_mac,
-        }
 
-        return self.outputDict
-        
-    def getHexFrame(self):
-        return {"hexa_frame" : self.hexFrame}'''   
-        
