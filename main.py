@@ -126,71 +126,73 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
 
     yamlFile.close()
 
-
 def arpSwitch(packetList: list[frame.Frame]):
-    #vyfiltrovanie ARP packetov
     packetList = [packet for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
-    
-    commsDict = {}
-    partialCommsRequest = []
-    partialCommsReply = []
-    requestReplyPair = []
+
+    completeComms = []
+    partialRequestComms = []
+    partialReplyComms = []
 
     for packet in packetList:
         if packet.opCode == "REQUEST":
-
-            #ak nasleduju dve REQUEST po sebe
-            if requestReplyPair and requestReplyPair[0].opCode == "REQUEST":
-                partialCommsRequest.append(requestReplyPair[0])
-
-            requestReplyPair = [packet]
+            completeComms.append([packet])
 
         elif packet.opCode == "REPLY":
 
-            #ak bol predosly packet request a tento je reply
-            if requestReplyPair and requestReplyPair[0].opCode == "REQUEST":
-                requestReplyPair.append(packet)
-
-                if not requestReplyPair[0].srcIP + requestReplyPair[0].dstIP in commsDict:
-                    commsDict[requestReplyPair[0].srcIP + requestReplyPair[0].dstIP] = []
-                commsDict[requestReplyPair[0].srcIP + requestReplyPair[0].dstIP].append(requestReplyPair[0])
-                commsDict[requestReplyPair[0].srcIP + requestReplyPair[0].dstIP].append(requestReplyPair[1])
-                
-                requestReplyPair = []
-
-            #ak po sebe su 2 reply
+            for comm in completeComms:
+                if packet.srcIP == comm[0].dstIP:
+                    comm.append(packet)
+                    break
+            
             else:
-                partialCommsReply.append(packet)
+                partialReplyComms.append(packet)
 
-    partialComms = partialCommsRequest, partialCommsReply
 
-    arpWriteYaml(commsDict.values(), partialComms)
+    completeCommsList = []
 
-#vypis do yaml pre prepinac ARP
-def arpWriteYaml(comms, partialComms):
+    for comm in completeComms:
+        if len(comm) == 2:
+            completeCommsList.append(comm[0])
+            completeCommsList.append(comm[1])
+        else:
+            partialRequestComms.append(comm[0])
+
+    arpWriteYaml(completeCommsList, partialRequestComms, partialReplyComms)
+
+def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile = open(PCAPFILE[:-5] + "-ARP.yaml", "w")
     yaml = YAML()
 
     data = {'name' : NAME,
             'pcap_name' : PCAPFILE,
             "filter_name" : "ARP",
-            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
             }
+    
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
+    
+    if completeComms:
+        data = {'complete_comms' : [{"number_comms": 1, "packets": [yamlFormat(p) for p in completeComms]}]}
+
+        yaml.dump(data, yamlFile)
+        yamlFile.write("\n")
+    
+
+    if partialRequestComms and not partialReplyComms:
+        data = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialRequestComms]}]}
+
+    elif partialReplyComms and not partialRequestComms:
+        data = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialReplyComms]}]}
+    
+    else:
+        data = {"partial_comms" : ([{"number_comms": 1, "packets": [yamlFormat(p) for p in partialReplyComms]}], [{"number_comms": 2, "packets": [yamlFormat(p) for p in partialReplyComms]}])}
 
     yaml.dump(data, yamlFile)
     yamlFile.write("\n")
 
-    if partialComms[0] and not partialComms[1]:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[0]]}]}
-    elif not partialComms[0] and partialComms[1]:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[1]]}]}
-    else:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[0]]}, {"number_comms": 2, "packets": [yamlFormat(p) for p in partialComms[1]]}]}
-
-    yaml.dump(temp, yamlFile)
 
     yamlFile.close()
-    
+
 
 #tftp ma 2 byty header a potom data
 def tftpSwitch(packetList: list[frame.Frame]):
@@ -424,7 +426,7 @@ def icmpWriteYaml(comms, partialComms):
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-15.pcap"
+PCAPFILE = "trace-22.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
@@ -435,7 +437,6 @@ if __name__ == '__main__':
     
     #nacitanie z pcap suboru
     frames = loadFrames()
-    #icmpSwitch(frames)
 
     #vypis do yaml
     if selectedProtocol.p is None:

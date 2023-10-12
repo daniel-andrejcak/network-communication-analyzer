@@ -130,13 +130,14 @@ class Frame:
         tempSrcIP = self.rawPacket[14*SIZEOFBYTE:18*SIZEOFBYTE]
         tempDstIP = self.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
         
+        self.getOpCode()
+
         self.formatIPv4(tempSrcIP, tempDstIP)
    
     def getIPFromIPv6(self):
         tempSrcIP = self.rawPacket[8*SIZEOFBYTE:24*SIZEOFBYTE]
         tempDstIP = self.rawPacket[24*SIZEOFBYTE:40*SIZEOFBYTE]
 
-        self.getOpCode()
         self.formatIPv6(tempSrcIP, tempDstIP)
 
     #prepis + format IP adries
