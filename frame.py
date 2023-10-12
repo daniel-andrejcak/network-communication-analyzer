@@ -131,12 +131,12 @@ class Frame:
         tempDstIP = self.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
         
         self.formatIPv4(tempSrcIP, tempDstIP)
-        self.getOpCode()
    
     def getIPFromIPv6(self):
         tempSrcIP = self.rawPacket[8*SIZEOFBYTE:24*SIZEOFBYTE]
         tempDstIP = self.rawPacket[24*SIZEOFBYTE:40*SIZEOFBYTE]
 
+        self.getOpCode()
         self.formatIPv6(tempSrcIP, tempDstIP)
 
     #prepis + format IP adries
@@ -168,8 +168,8 @@ class Frame:
             self.appProtocol = protocols["udp_protocol"][self.dstPort]
 
 
-    #doplnenie opcode do ARP packetov
     def getOpCode(self):
+        #doplnenie opcode do ARP packetov
         if int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0001:
                 self.opCode = "REQUEST"
         elif int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:

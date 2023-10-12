@@ -35,8 +35,9 @@ def yamlFormat(packet: frame.Frame, switch=None):
     elif packet.frameType == "ETHERNET II":
         tempDict["ether_type"] = packet.etherType
 
-        #vypis len pri prepinaci ARP
-        if switch == "ARP": tempDict["arp_opcode"] = packet.opCode
+        
+        if packet.etherType == "ARP": tempDict["arp_opcode"] = packet.opCode
+
 
         try:
             tempDict["src_ip"] = packet.srcIP
@@ -47,6 +48,14 @@ def yamlFormat(packet: frame.Frame, switch=None):
         if packet.etherType == "IPv4":
                 
             tempDict["protocol"] = packet.protocol
+                
+
+            if packet.protocol == "ICMP": tempDict["icmp_type"] = packet.icmpType
+        
+            #vypis pre ICMP switch
+            if switch == "ICMP":
+                tempDict["icmp_id"] = packet.id
+                tempDict["icmp_seq"] = packet.seq
 
             try:
                 tempDict["src_port"] = packet.srcPort
@@ -118,8 +127,6 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
     yamlFile.close()
 
 
-
-
 def arpSwitch(packetList: list[frame.Frame]):
     #vyfiltrovanie ARP packetov
     packetList = [packet for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
@@ -167,18 +174,18 @@ def arpWriteYaml(comms, partialComms):
     data = {'name' : NAME,
             'pcap_name' : PCAPFILE,
             "filter_name" : "ARP",
-            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p, "ARP") for p in com]} for i, com in enumerate(comms)]
+            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
             }
 
     yaml.dump(data, yamlFile)
     yamlFile.write("\n")
 
     if partialComms[0] and not partialComms[1]:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p, "ARP") for p in partialComms[0]]}]}
+        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[0]]}]}
     elif not partialComms[0] and partialComms[1]:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p, "ARP") for p in partialComms[1]]}]}
+        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[1]]}]}
     else:
-        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p, "ARP") for p in partialComms[0]]}, {"number_comms": 2, "packets": [yamlFormat(p, "ARP") for p in partialComms[1]]}]}
+        temp = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComms[0]]}, {"number_comms": 2, "packets": [yamlFormat(p) for p in partialComms[1]]}]}
 
     yaml.dump(temp, yamlFile)
 
@@ -193,15 +200,14 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
     udpPackets = []
 
-    #vyfiltruje vsetky udp packety
+    """#vyfiltruje vsetky udp packety
     for packet in packetList:
         if packet.frameType == "ETHERNET II" and packet.etherType == "IPv4" and packet.protocol == "UDP":
             udpPackets.append(packet)
-
+"""
 
     #najde vsetky tftp packety
     tftpPackets = [packet for packet in udpPackets if (hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP")]
-    tftpIP = [packet.srcIP + packet.dstIP for packet in tftpPackets]
     tftpDataPorts = []
     index = [] #index bude src a dst port tftp komunikacie
     
@@ -277,6 +283,143 @@ def tftpWriteYaml(comms, partialComms):
     yamlFile.close()
 
 
+def icmpSwitch(packetList: list[frame.Frame]):
+
+    comms = {}
+    partialComms = {}
+
+
+    def placeInPartialComms(packet: frame.Frame, firstIP, secondIP):
+        if firstIP + ' ' + secondIP not in partialComms:
+            partialComms[firstIP + ' ' + secondIP] = [packet]
+        else:
+            partialComms[firstIP + ' ' + secondIP].append(packet)
+
+
+
+    packetList = [packet for packet in packetList if hasattr(packet, "protocol") and packet.protocol == "ICMP"]
+
+    
+
+    for packet in packetList:
+        packet.icmpType = packet.rawPacket[:SIZEOFBYTE]
+
+        if int(packet.rawPacket[:SIZEOFBYTE], 16) == 0:
+            packet.icmpType = "ECHO REPLY"
+        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x08:
+            packet.icmpType = "ECHO REQUEST"
+        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x0B:
+            packet.icmpType = "Time exceeded"
+        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x03:
+            packet.icmpType = "Destination unreachable"
+        
+
+        packet.id = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+        packet.seq = int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE], 16)
+
+        if packet.icmpType == "ECHO REQUEST":
+
+            if packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id) not in comms:
+                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id)] = [[packet]]
+                continue
+            else:
+                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id)].append([packet])
+            
+
+        elif packet.icmpType == "ECHO REPLY":
+            
+            #ked reply packet nema svoju komunikaciu zacatu
+            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id) not in comms:
+
+                placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+
+            #pokusi sa najst request k reply na zaklade identifier a sequence
+            else:
+                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)] if pair[0].seq == packet.seq][0]
+
+                if pair:
+                    pair.append(packet)
+                else:
+                    placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+
+        #pokusi sa najst echo request na ktory odpoveda a obidva sa daju do partial comms
+        elif packet.icmpType == "Time exceeded":
+
+            #srcIP, identifier a sequence to musi zobrat z encapsulated icmp
+            packet.srcIP = packet.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
+            packet.srcIP = '.'.join([str(int(packet.srcIP[i:i+2], 16)) for i in range(0, len(packet.srcIP), 2)])
+
+            packet.id = int(packet.rawPacket[32*SIZEOFBYTE:34*SIZEOFBYTE] , 16)
+            
+            packet.seq = int(packet.rawPacket[34*SIZEOFBYTE:36*SIZEOFBYTE] , 16)
+
+            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id) not in comms:
+
+                placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+
+            #pokusi sa najst request ku time exceeded na zaklade identifier a sequence
+            else:
+                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)] if pair[0].seq == packet.seq][0]
+
+                #z comms odstrani aj povodny request packet a da ho do partial zaroven s time exceeded
+                if pair:
+                    placeInPartialComms(pair[0], pair[0].srcIP, pair[0].dstIP)
+                    placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+
+
+                    comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)].remove(pair)
+
+                else:
+                    placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+
+        #obdoba request packetu
+        elif packet.icmpType == "Destination unreachable":
+            placeInPartialComms(packet, packet.srcIP, packet.dstIP)
+
+
+
+    completeComms = {}
+
+    #vyfiltruje samotne request a rozbali request reply pary
+    for key in comms.keys():
+        for pair in comms[key]:
+
+            if len(pair) == 2:
+                if key not in completeComms:
+                    completeComms[key] = []
+
+                completeComms[key].append(pair[0])    
+                completeComms[key].append(pair[1])    
+
+            else:
+                if key not in partialComms:
+                    partialComms[key] = []
+
+                partialComms[key].append(pair[0])    
+
+
+    icmpWriteYaml(completeComms.values(), partialComms.values())
+
+
+def icmpWriteYaml(comms, partialComms):
+    yamlFile = open(PCAPFILE[:-5] + "-ICMP.yaml", "w")
+    yaml = YAML()
+
+    data = {'name' : NAME,
+            'pcap_name' : PCAPFILE,
+            "filter_name" : "ICMP",
+            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p, "ICMP") for p in com]} for i, com in enumerate(comms)]
+            }
+
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
+
+    data = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(partialComms)]}
+
+    yaml.dump(data, yamlFile)
+
+    yamlFile.close()
+
 
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
@@ -292,7 +435,7 @@ if __name__ == '__main__':
     
     #nacitanie z pcap suboru
     frames = loadFrames()
-    
+    #icmpSwitch(frames)
 
     #vypis do yaml
     if selectedProtocol.p is None:
@@ -309,7 +452,8 @@ if __name__ == '__main__':
 
     elif selectedProtocol.p == "ICMP":
         print("ICMP")
-    
+        icmpSwitch(frames)
+        
     elif selectedProtocol.p == "ARP":
         print("ARP switch")
         arpSwitch(frames)
