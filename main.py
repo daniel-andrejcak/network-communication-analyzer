@@ -195,7 +195,7 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile.close()
 
 
-#tftp ma 2 byty header a potom data
+#pridat IP do keys pre komunikaciu
 def tftpSwitch(packetList: list[frame.Frame]):
 
     udpPackets = []
@@ -212,38 +212,70 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
 
     comms = {}
+    completeComms = {}
+
 
     for index, packet in enumerate(udpPackets):
-        opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
+        packet.opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
 
-        if packet in tftpPackets and opCode in (0x01, 0x02):
+        if packet in tftpPackets and packet.opCode in (0x01, 0x02):
             if index + 1 < len(udpPackets):
                 if udpPackets[index + 1].dstPort == packet.srcPort:
                     comms[(packet.srcPort, udpPackets[index + 1].srcPort)] = [packet]
         
-        elif opCode in (0x03, 0x04, 0x05):
+        #ak je to opCode 0x03 - data
+        elif packet.opCode == 0x03:
+            #najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
             for key in comms.keys():
+
                 if set(key) == {packet.srcPort, packet.dstPort}:
                     comms[key].append(packet)
+                        
+        # ak je opCode 0x04 - acknowledgment
+        elif packet.opCode == 0x04:
+            #najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
+            for key in comms.keys():
+
+                if set(key) == {packet.srcPort, packet.dstPort}:
+                    comms[key].append(packet)
+
+                    size = 0
+
+                    #zisti velkost prveho poslaneho datagramu
+                    if comms[key][0].opCode == 0x01:
+
+                        if len(key) >= 2:
+                            size = int(comms[key][1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+                    elif comms[key][0].opCode == 0x02:
+
+                        if len(key) >= 3:
+                            size = int(comms[key][2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+                    #zisti ci je velkost posledneho pridaneho datagramu mensia ako velkost prveho datagramu - ukoncenie komunikacie
+                    if size and int(comms[key][-1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) < size:
+                        
+                        completeComms[key] = comms.pop(key)
+                        completeComms[key].append(packet)   
+
+                        break 
+
         
-    #toto netreba ak berieme ze kazda tftp komunikacia je kompletna
-    """completeComms = {}
-    for comm in comms:
-        if comms[comm][0].opCode == 0x01:
-            if len(comm) >= 2:
-                size = int(comms[comm][1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
-        elif comms[comm][0].opCode == 0x02:
-            if len(comm) >= 3:
-                size = int(comms[comm][2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+        #ak sa komunikacia konci opCode 0x05 - error, tak ju rovno da do complete communications
+        elif packet.opCode == 0x05:
 
-        if int(comms[comm][-2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) <= size and comms[comm][-1].opCode == 0x04:
-            completeComms[comm] = comms.pop(comm)
-            
-        tftpWriteYaml(completeComms.values())"""
+            for key in comms.keys():
 
+                if set(key) == {packet.srcPort, packet.dstPort}:
 
+                    completeComms[key] = comms.pop(key)
+                    completeComms[key].append(packet)
+                    
+                    break
 
-    tftpWriteYaml(comms.values())
+    
+    tftpWriteYaml(completeComms.values())
+
 
 def tftpWriteYaml(comms):
     yamlFile = open(PCAPFILE[:-5] + "-TFTP.yaml", "w")
@@ -256,8 +288,6 @@ def tftpWriteYaml(comms):
             }
 
     yaml.dump(data, yamlFile)
-    yamlFile.write("\n")
-
 
     yamlFile.close()
 
@@ -310,7 +340,7 @@ def icmpSwitch(packetList: list[frame.Frame]):
                 else:
                     placeInPartialComms(packet, packet.dstIP, packet.srcIP)
 
-        #pokusi sa najst echo request na ktory odpoveda a obidva sa daju do partial comms
+        #pokusi sa najst echo request na ktory odpoveda a da ho do complete communication
         elif packet.icmpType == "Time exceeded":
 
             #srcIP, identifier a sequence to musi zobrat z encapsulated icmp
@@ -329,14 +359,8 @@ def icmpSwitch(packetList: list[frame.Frame]):
             else:
                 pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)] if pair[0].seq == packet.seq][0]
 
-                #z comms odstrani aj povodny request packet a da ho do partial zaroven s time exceeded
                 if pair:
-                    placeInPartialComms(pair[0], pair[0].srcIP, pair[0].dstIP)
-                    placeInPartialComms(packet, packet.dstIP, packet.srcIP)
-
-
-                    comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)].remove(pair)
-
+                    pair.append(packet)
                 else:
                     placeInPartialComms(packet, packet.dstIP, packet.srcIP)
 
@@ -381,9 +405,10 @@ def icmpWriteYaml(comms, partialComms):
     yaml.dump(data, yamlFile)
     yamlFile.write("\n")
 
-    data = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(partialComms)]}
+    if partialComms:
+        data = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(partialComms)]}
+        yaml.dump(data, yamlFile)
 
-    yaml.dump(data, yamlFile)
 
     yamlFile.close()
 
