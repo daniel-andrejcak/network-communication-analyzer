@@ -195,7 +195,6 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile.close()
 
 
-#pridat IP do keys pre komunikaciu
 def tftpSwitch(packetList: list[frame.Frame]):
 
     udpPackets = []
@@ -218,17 +217,18 @@ def tftpSwitch(packetList: list[frame.Frame]):
     for index, packet in enumerate(udpPackets):
         packet.opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
 
+        # ak je to read alebo write request
         if packet in tftpPackets and packet.opCode in (0x01, 0x02):
             if index + 1 < len(udpPackets):
                 if udpPackets[index + 1].dstPort == packet.srcPort:
-                    comms[(packet.srcPort, udpPackets[index + 1].srcPort)] = [packet]
+                    comms[(packet.srcIP, packet.dstIP, packet.srcPort, udpPackets[index + 1].srcPort)] = [packet]
         
         #ak je to opCode 0x03 - data
         elif packet.opCode == 0x03:
             #najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
             for key in comms.keys():
 
-                if set(key) == {packet.srcPort, packet.dstPort}:
+                if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
                     comms[key].append(packet)
                         
         # ak je opCode 0x04 - acknowledgment
@@ -236,7 +236,7 @@ def tftpSwitch(packetList: list[frame.Frame]):
             #najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
             for key in comms.keys():
 
-                if set(key) == {packet.srcPort, packet.dstPort}:
+                if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
                     comms[key].append(packet)
 
                     size = 0
@@ -266,7 +266,7 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
             for key in comms.keys():
 
-                if set(key) == {packet.srcPort, packet.dstPort}:
+                if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
 
                     completeComms[key] = comms.pop(key)
                     completeComms[key].append(packet)
@@ -275,7 +275,6 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
     
     tftpWriteYaml(completeComms.values())
-
 
 def tftpWriteYaml(comms):
     yamlFile = open(PCAPFILE[:-5] + "-TFTP.yaml", "w")
@@ -308,7 +307,6 @@ def icmpSwitch(packetList: list[frame.Frame]):
 
     packetList = [packet for packet in packetList if hasattr(packet, "protocol") and packet.protocol == "ICMP"]
 
-    
 
     for packet in packetList:
         
@@ -364,8 +362,8 @@ def icmpSwitch(packetList: list[frame.Frame]):
                 else:
                     placeInPartialComms(packet, packet.dstIP, packet.srcIP)
 
-        #obdoba request packetu
-        elif packet.icmpType == "Destination unreachable":
+        #ostatne typy icmp idu do partial communications
+        else:
             placeInPartialComms(packet, packet.srcIP, packet.dstIP)
 
 
