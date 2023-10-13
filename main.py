@@ -133,31 +133,32 @@ def arpSwitch(packetList: list[frame.Frame]):
     partialRequestComms = []
     partialReplyComms = []
 
+    #request packety uklada do partial request list a ked k nim najde reply, tak ich presunie do complete
     for packet in packetList:
         if packet.opCode == "REQUEST":
-            completeComms.append([packet])
+            
+            partialRequestComms.append(packet)
 
         elif packet.opCode == "REPLY":
 
-            for comm in completeComms:
-                if packet.srcIP == comm[0].dstIP:
-                    comm.append(packet)
+            for comm in partialRequestComms:
+
+                if packet.srcIP == comm.dstIP:
+
+                    completeComms.append(comm)
+                    completeComms.append(packet)
+
+                    partialRequestComms.remove(comm)
+
                     break
             
             else:
+
                 partialReplyComms.append(packet)
 
 
-    completeCommsList = []
 
-    for comm in completeComms:
-        if len(comm) == 2:
-            completeCommsList.append(comm[0])
-            completeCommsList.append(comm[1])
-        else:
-            partialRequestComms.append(comm[0])
-
-    arpWriteYaml(completeCommsList, partialRequestComms, partialReplyComms)
+    arpWriteYaml(completeComms, partialRequestComms, partialReplyComms)
 
 def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile = open(PCAPFILE[:-5] + "-ARP.yaml", "w")
@@ -402,7 +403,6 @@ def icmpSwitch(packetList: list[frame.Frame]):
 
     icmpWriteYaml(completeComms.values(), partialComms.values())
 
-
 def icmpWriteYaml(comms, partialComms):
     yamlFile = open(PCAPFILE[:-5] + "-ICMP.yaml", "w")
     yaml = YAML()
@@ -423,10 +423,12 @@ def icmpWriteYaml(comms, partialComms):
     yamlFile.close()
 
 
+
+
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-22.pcap"
+PCAPFILE = "trace-26.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
