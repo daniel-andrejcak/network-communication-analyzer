@@ -136,7 +136,7 @@ def arpSwitch(packetList: list[frame.Frame]):
     #request packety uklada do partial request list a ked k nim najde reply, tak ich presunie do complete
     for packet in packetList:
         if packet.opCode == "REQUEST":
-            
+
             partialRequestComms.append(packet)
 
         elif packet.opCode == "REPLY":
@@ -198,75 +198,54 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
 #tftp ma 2 byty header a potom data
 def tftpSwitch(packetList: list[frame.Frame]):
 
-    commsDict = {}
-    partialCommsDict = {}
-
     udpPackets = []
+    tftpPackets = []
 
-    """#vyfiltruje vsetky udp packety
+    #vyfiltruje vsetky udp a udp + tftp packety
     for packet in packetList:
         if packet.frameType == "ETHERNET II" and packet.etherType == "IPv4" and packet.protocol == "UDP":
-            udpPackets.append(packet)
-"""
-
-    #najde vsetky tftp packety
-    tftpPackets = [packet for packet in udpPackets if (hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP")]
-    tftpDataPorts = []
-    index = [] #index bude src a dst port tftp komunikacie
-    
-    for packet in tftpPackets:
-        index.append(packet.srcPort)
-
-        if packet.frameNumber < len(packetList) and packetList[packet.frameNumber].dstPort == packet.srcPort:
-            index.append(packetList[packet.frameNumber].srcPort)
-
-            tftpDataPorts.append(index)
-
-            index = []
-
-    #odstrani vsetky ramce pred prvym tftp - netreba ich
-    packetList = packetList[tftpPackets[0].frameNumber - 1:]
-
-    comm = []
-    index = -1
-    ack = False #flag, aby to zobralo aj posledny ack packet v konecnej komunikacii
-
-    for packet in packetList:
+            if (hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP"):
+                tftpPackets.append(packet)
+                udpPackets.append(packet)
+            elif not hasattr(packet, "appProtocol"):
+                udpPackets.append(packet)
 
 
-        if packet in tftpPackets:
-            comm.append(packet)
-            index += 1
-            size = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+    comms = {}
 
-        elif hasattr(packet, "srcPort") and packet.srcPort in tftpDataPorts[index] and packet.dstPort in tftpDataPorts[index]:
-            comm.append(packet)
-            
-            if ack:
-                commsDict[str(tftpDataPorts[index][0]) + str(tftpDataPorts[index][1])] = comm
-                comm = []
+    for index, packet in enumerate(udpPackets):
+        opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
 
-                ack = False
-
-                
-            #8 a 9 byte su opcode
-            opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
-
-            #error opCode
-            if opCode == 0x0005:
-                partialCommsDict[str(tftpDataPorts[index][0]) + str(tftpDataPorts[index][1])] = comm
-                comm = []
-
-            #ak je packet s mensou velkostou ako prvy packet v tftp komunikacii - ukoncenie komunikacie    
-            elif opCode == 0x0003 and int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) < size:
-                ack = True
-
+        if packet in tftpPackets and opCode in (0x01, 0x02):
+            if index + 1 < len(udpPackets):
+                if udpPackets[index + 1].dstPort == packet.srcPort:
+                    comms[(packet.srcPort, udpPackets[index + 1].srcPort)] = [packet]
         
+        elif opCode in (0x03, 0x04, 0x05):
+            for key in comms.keys():
+                if set(key) == {packet.srcPort, packet.dstPort}:
+                    comms[key].append(packet)
+        
+    #toto netreba ak berieme ze kazda tftp komunikacia je kompletna
+    """completeComms = {}
+    for comm in comms:
+        if comms[comm][0].opCode == 0x01:
+            if len(comm) >= 2:
+                size = int(comms[comm][1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+        elif comms[comm][0].opCode == 0x02:
+            if len(comm) >= 3:
+                size = int(comms[comm][2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+        if int(comms[comm][-2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) <= size and comms[comm][-1].opCode == 0x04:
+            completeComms[comm] = comms.pop(comm)
+            
+        tftpWriteYaml(completeComms.values())"""
 
 
-    tftpWriteYaml(commsDict.values(),  partialCommsDict.values())
 
-def tftpWriteYaml(comms, partialComms):
+    tftpWriteYaml(comms.values())
+
+def tftpWriteYaml(comms):
     yamlFile = open(PCAPFILE[:-5] + "-TFTP.yaml", "w")
     yaml = YAML()
 
@@ -279,9 +258,6 @@ def tftpWriteYaml(comms, partialComms):
     yaml.dump(data, yamlFile)
     yamlFile.write("\n")
 
-    data = {"partial_comms" : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(partialComms)]}
-
-    yaml.dump(data, yamlFile)
 
     yamlFile.close()
 
@@ -305,18 +281,7 @@ def icmpSwitch(packetList: list[frame.Frame]):
     
 
     for packet in packetList:
-        packet.icmpType = packet.rawPacket[:SIZEOFBYTE]
-
-        if int(packet.rawPacket[:SIZEOFBYTE], 16) == 0:
-            packet.icmpType = "ECHO REPLY"
-        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x08:
-            packet.icmpType = "ECHO REQUEST"
-        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x0B:
-            packet.icmpType = "Time exceeded"
-        elif int(packet.rawPacket[:SIZEOFBYTE], 16) == 0x03:
-            packet.icmpType = "Destination unreachable"
         
-
         packet.id = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
         packet.seq = int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE], 16)
 
@@ -428,7 +393,7 @@ def icmpWriteYaml(comms, partialComms):
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-26.pcap"
+PCAPFILE = "trace-15.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
