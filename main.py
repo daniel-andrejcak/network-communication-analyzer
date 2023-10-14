@@ -65,6 +65,13 @@ def yamlFormat(packet: frame.Frame, switch=None):
         try:
             tempDict["src_ip"] = packet.srcIP
             tempDict["dst_ip"] = packet.dstIP
+
+            if packet.flags_mf or packet.frag_offset:
+                tempDict["id"] = packet.identifier
+                tempDict["flags_mf"] = packet.flags_mf
+                tempDict["frag_offset"] = packet.frag_offset
+
+
         except AttributeError:
             pass
 
@@ -622,7 +629,7 @@ def tcpWriteYaml(comms, partialComm, protocol):
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-6.pcap"
+PCAPFILE = "trace-26.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat

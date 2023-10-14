@@ -212,4 +212,6 @@ class Frame:
 
         self.frag_offset = int(flags[3:], 2)
 
+        self.frag_offset <<= 3
+
         
