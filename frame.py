@@ -15,6 +15,7 @@ class Frame:
         self.makeMACAddr()
         self.determineFrameType()
 
+        
 
     #formatuje hex kod aby splnal podmienky vypisu do yaml
     def makeHexFrame(self): 
@@ -86,6 +87,7 @@ class Frame:
         
         self.frameType += " RAW"
 
+
     #urci IP protocol
     def determimeEtherType(self):
         ipType = int(self.rawPacket[:2*SIZEOFBYTE], 16)
@@ -102,13 +104,16 @@ class Frame:
                 self.getIPFromIPv6()
         else: self.etherType = "unknown"
 
+
     #funkcie na ziskanie IP z hexagulasu - kazdy protokol ich ma na inom mieste
     def getIPFromIPv4(self):
-        #urci protocol ako tcp, udp... doplnit do protocols.yaml
+        #urci protocol ako tcp, udp...
         self.protocol = int(self.rawPacket[9*SIZEOFBYTE:10*SIZEOFBYTE], 16)
 
         tempSrcIP = self.rawPacket[12*SIZEOFBYTE:16*SIZEOFBYTE]
         tempDstIP = self.rawPacket[16*SIZEOFBYTE:20*SIZEOFBYTE]
+
+        self.ipv4Flags()
 
         #odstrani ip header, ktory moze byt od 20B do 60B
         headerLength = 4*int(self.rawPacket[1], 16)
@@ -119,6 +124,7 @@ class Frame:
 
             if self.protocol == "TCP": self.getTCPPorts()
             elif self.protocol == "UDP": self.getUDPPorts()
+            elif self.protocol == "ICMP": self.getIcmpType()
 
         else:
             self.protocol = "unknown"
@@ -140,6 +146,7 @@ class Frame:
 
         self.formatIPv6(tempSrcIP, tempDstIP)
 
+
     #prepis + format IP adries
     def formatIPv4(self, srcIP, dstIP):
         self.srcIP = '.'.join([str(int(srcIP[i:i+2], 16)) for i in range(0, len(srcIP), 2)])
@@ -148,6 +155,7 @@ class Frame:
     def formatIPv6(self, srcIP, dstIP):
         self.srcIP = ':'.join([srcIP[i:i+4] for i in range(0, len(srcIP), 4)])
         self.dstIP = ':'.join([dstIP[i:i+4] for i in range(0, len(dstIP), 4)])
+
 
     #vypise porty, pripadne zisti nazov aplikacneho protokolu
     def getTCPPorts(self):
@@ -175,3 +183,33 @@ class Frame:
                 self.opCode = "REQUEST"
         elif int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:
             self.opCode = "REPLY"
+
+
+    def getIcmpType(self):
+        self.icmpType = self.rawPacket[:SIZEOFBYTE]
+
+        if int(self.rawPacket[:SIZEOFBYTE], 16) == 0:
+            self.icmpType = "ECHO REPLY"
+        elif int(self.rawPacket[:SIZEOFBYTE], 16) == 0x08:
+            self.icmpType = "ECHO REQUEST"
+        elif int(self.rawPacket[:SIZEOFBYTE], 16) == 0x0B:
+            self.icmpType = "Time exceeded"
+        elif int(self.rawPacket[:SIZEOFBYTE], 16) == 0x03:
+            self.icmpType = "Destination unreachable"
+
+    #pre icmp filter vytvori atributy identifier mf_flags a frag_offset
+    def ipv4Flags(self):
+        #[2:] da prec 0b pred binary stringom
+
+        self.identifier = int(self.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+
+        flags = bin(int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE], 16))[2:]
+
+        flags = ("0"*(16 - len(flags))) + flags
+
+        self.flags_mf = True if int(flags[2]) else False
+
+        self.frag_offset = int(flags[3:], 2)
+
+        

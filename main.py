@@ -7,14 +7,37 @@ from scapy.all import rdpcap
 
 
 #otvorenie pcap suboru a nacitanie jednotlivych packetov do list
-def loadFrames():
+def loadFrames(switch = None):
     frames = rdpcap(PCAPFILE)
     frameList = [bytes(p) for p in frames]
 
 
     formatedFrameList = []
     for i in range(0, len(frameList)):
-        formatedFrameList.append(frame.Frame(i+1, frameList[i]))
+
+        #vola sa ramec, pretoze frame uz je zabrate
+        ramec = frame.Frame(i+1, frameList[i])
+
+        #ak je zapnuty prepinac -p, tak to prida do zoznamu iba pozadovane ramce
+        if switch == "ARP":
+            if not (hasattr(ramec, "etherType") and ramec.etherType == "ARP"):
+                continue
+
+        elif switch == "ICMP":
+            #tu to este treba zmenit potom na fragmentovane ip 
+            if not(hasattr(ramec, "protocol") and ramec.protocol == "ICMP"):
+                continue
+
+        elif switch == "TFTP":
+            if not (hasattr(ramec, "protocol") and ramec.protocol == "UDP"):
+                continue
+
+        elif switch:
+            if not (hasattr(ramec, "appProtocol") and ramec.protocol == switch):
+                continue
+
+
+        formatedFrameList.append(ramec)
 
     return formatedFrameList
 
@@ -54,7 +77,7 @@ def yamlFormat(packet: frame.Frame, switch=None):
         
             #vypis pre ICMP switch
             if switch == "ICMP":
-                tempDict["icmp_id"] = packet.id
+                tempDict["icmp_id"] = packet.icmpId
                 tempDict["icmp_seq"] = packet.seq
 
             try:
@@ -74,7 +97,6 @@ def yamlFormat(packet: frame.Frame, switch=None):
     
     
     return tempDict
-
 
 """funkcia pre ulohu 3 - este nie je hotova"""
 def IPv4Senders(packetList: list[frame.Frame]):
@@ -126,9 +148,8 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
 
     yamlFile.close()
 
-def arpSwitch(packetList: list[frame.Frame]):
-    packetList = [packet for packet in packetList if (packet.frameType == "ETHERNET II" and packet.etherType == "ARP")]
 
+def arpSwitch(packetList: list[frame.Frame]):
     completeComms = []
     partialRequestComms = []
     partialReplyComms = []
@@ -196,33 +217,21 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
 
 
 def tftpSwitch(packetList: list[frame.Frame]):
-
-    udpPackets = []
-    tftpPackets = []
-
-    #vyfiltruje vsetky udp a udp + tftp packety
-    for packet in packetList:
-        if packet.frameType == "ETHERNET II" and packet.etherType == "IPv4" and packet.protocol == "UDP":
-            if (hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP"):
-                tftpPackets.append(packet)
-                udpPackets.append(packet)
-            elif not hasattr(packet, "appProtocol"):
-                udpPackets.append(packet)
-
-
     comms = {}
     completeComms = {}
 
 
-    for index, packet in enumerate(udpPackets):
+    for index, packet in enumerate(packetList):
         packet.opCode = int(packet.rawPacket[8*SIZEOFBYTE:10*SIZEOFBYTE], 16)
 
         # ak je to read alebo write request
-        if packet in tftpPackets and packet.opCode in (0x01, 0x02):
-            if index + 1 < len(udpPackets):
-                if udpPackets[index + 1].dstPort == packet.srcPort:
-                    comms[(packet.srcIP, packet.dstIP, packet.srcPort, udpPackets[index + 1].srcPort)] = [packet]
-        
+        if hasattr(packet, "appProtocol") and packet.appProtocol == "TFTP" and packet.opCode in (0x01, 0x02):
+
+            if index + 1 < len(packetList) and packetList[index + 1].dstPort == packet.srcPort:
+
+                comms[(packet.srcIP, packet.dstIP, packet.srcPort, packetList[index + 1].srcPort)] = [packet]
+    
+       
         #ak je to opCode 0x03 - data
         elif packet.opCode == 0x03:
             #najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
@@ -276,9 +285,13 @@ def tftpSwitch(packetList: list[frame.Frame]):
     
     #komunikacie, ktore obsahuju iba 1 poslany datagram su brane ako kompletne, aj ked nesplnili podmienku ze posledny datagram musi byt mensi ako prvy
     for key in comms:
+
         if len(comms[key]) in (3, 4):
+
             if comms[key][0].opCode in (0x01, 0x02):
+
                 if comms[key][1].opCode == 0x03 and comms[key][2].opCode == 0x04 or comms[key][2].opCode == 0x03 and comms[key][3].opCode == 0x04:
+
                     completeComms[key] = comms.pop(key)
                     break
 
@@ -301,11 +314,12 @@ def tftpWriteYaml(comms):
     yamlFile.close()
 
 
+#komunikaciu spravi podla srcIP dstIP a icmpID, v kazdej komuniakcii robi "pary" req reply podla seq
 def icmpSwitch(packetList: list[frame.Frame]):
 
     comms = {}
     partialComms = {}
-
+    mfPackets = []
 
     def placeInPartialComms(packet: frame.Frame, firstIP, secondIP):
         if firstIP + ' ' + secondIP not in partialComms:
@@ -314,34 +328,60 @@ def icmpSwitch(packetList: list[frame.Frame]):
             partialComms[firstIP + ' ' + secondIP].append(packet)
 
 
-
-    packetList = [packet for packet in packetList if hasattr(packet, "protocol") and packet.protocol == "ICMP"]
-
-
     for packet in packetList:
-        
-        packet.id = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
+
+        #to je ine ako identifier
+        packet.icmpId = int(packet.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
         packet.seq = int(packet.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE], 16)
+        
+        
+        #ak ma fragment nejaky offset, tak sa pokusi najst k nemu prvu cast a prepisat udaje o ICMP
+        if packet.frag_offset:
+            fragment = [fragment for fragment in mfPackets if packet.srcIP == fragment.srcIP and packet.dstIP == fragment.dstIP and packet.identifier == fragment.identifier]
+
+            if fragment:
+                fragment = fragment[0]
+
+                packet.icmpType = fragment.icmpType
+                packet.icmpId = fragment.icmpId
+                packet.seq = fragment.seq
+
+                mfPackets.remove(fragment)
+            
+        
+        if packet.flags_mf:
+            mfPackets.append(packet)
+
 
         if packet.icmpType == "ECHO REQUEST":
 
-            if packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id) not in comms:
-                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id)] = [[packet]]
+            if packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId) not in comms:
+                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId)] = [[packet]]
+                
                 continue
+
             else:
-                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.id)].append([packet])
+                #ak je to fragment, tak ho prida k povodne najdenemu ECHO REQUEST
+                if packet.frag_offset:
+                    previousFragment = [pair for pair in comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId)] if pair[-1].identifier == packet.identifier][0]
+
+                    previousFragment.append(packet)
+
+                else:
+                    comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId)].append([packet])
+
             
 
         elif packet.icmpType == "ECHO REPLY":
             
             #ked reply packet nema svoju komunikaciu zacatu
-            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id) not in comms:
+            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId) not in comms:
 
                 placeInPartialComms(packet, packet.dstIP, packet.srcIP)
 
             #pokusi sa najst request k reply na zaklade identifier a sequence
             else:
-                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)] if pair[0].seq == packet.seq][0]
+                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
 
                 if pair:
                     pair.append(packet)
@@ -355,17 +395,17 @@ def icmpSwitch(packetList: list[frame.Frame]):
             packet.srcIP = packet.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
             packet.srcIP = '.'.join([str(int(packet.srcIP[i:i+2], 16)) for i in range(0, len(packet.srcIP), 2)])
 
-            packet.id = int(packet.rawPacket[32*SIZEOFBYTE:34*SIZEOFBYTE] , 16)
+            packet.icmpId = int(packet.rawPacket[32*SIZEOFBYTE:34*SIZEOFBYTE] , 16)
             
             packet.seq = int(packet.rawPacket[34*SIZEOFBYTE:36*SIZEOFBYTE] , 16)
 
-            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id) not in comms:
+            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId) not in comms:
 
                 placeInPartialComms(packet, packet.dstIP, packet.srcIP)
 
             #pokusi sa najst request ku time exceeded na zaklade identifier a sequence
             else:
-                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.id)] if pair[0].seq == packet.seq][0]
+                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
 
                 if pair:
                     pair.append(packet)
@@ -384,13 +424,13 @@ def icmpSwitch(packetList: list[frame.Frame]):
     for key in comms.keys():
         for pair in comms[key]:
 
-            if len(pair) == 2:
+            if len(pair) >= 2:
                 if key not in completeComms:
                     completeComms[key] = []
 
-                completeComms[key].append(pair[0])    
-                completeComms[key].append(pair[1])    
-
+                for packet in pair:
+                    completeComms[key].append(packet)    
+                    
             else:
                 if key not in partialComms:
                     partialComms[key] = []
@@ -592,7 +632,7 @@ if __name__ == '__main__':
     selectedProtocol = parser.parse_args()
     
     #nacitanie z pcap suboru
-    frames = loadFrames()
+    frames = loadFrames(selectedProtocol.p)
 
     #vypis do yaml
     if selectedProtocol.p is None:
