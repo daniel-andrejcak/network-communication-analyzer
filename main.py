@@ -241,22 +241,22 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
                     size = 0
 
+                    #kontrola ci sa neukoncila komunikacia
                     #zisti velkost prveho poslaneho datagramu
                     if comms[key][0].opCode == 0x01:
 
-                        if len(key) >= 2:
+                        if len(comms[key]) >= 2:
                             size = int(comms[key][1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
 
                     elif comms[key][0].opCode == 0x02:
 
-                        if len(key) >= 3:
+                        if len(comms[key]) >= 3:
                             size = int(comms[key][2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)
 
                     #zisti ci je velkost posledneho pridaneho datagramu mensia ako velkost prveho datagramu - ukoncenie komunikacie
-                    if size and int(comms[key][-1].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) < size:
+                    if size and int(comms[key][-2].rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16) < size:
                         
                         completeComms[key] = comms.pop(key)
-                        completeComms[key].append(packet)   
 
                         break 
 
@@ -274,6 +274,16 @@ def tftpSwitch(packetList: list[frame.Frame]):
                     break
 
     
+    #komunikacie, ktore obsahuju iba 1 poslany datagram su brane ako kompletne, aj ked nesplnili podmienku ze posledny datagram musi byt mensi ako prvy
+    for key in comms:
+        if len(comms[key]) in (3, 4):
+            if comms[key][0].opCode in (0x01, 0x02):
+                if comms[key][1].opCode == 0x03 and comms[key][2].opCode == 0x04 or comms[key][2].opCode == 0x03 and comms[key][3].opCode == 0x04:
+                    completeComms[key] = comms.pop(key)
+                    break
+
+
+
     tftpWriteYaml(completeComms.values())
 
 def tftpWriteYaml(comms):
@@ -411,12 +421,168 @@ def icmpWriteYaml(comms, partialComms):
     yamlFile.close()
 
 
+def tcpSwitch(packetList: list[frame.Frame], protocol: str):
+
+
+    def checkOpening(packetList: list[frame.Frame]):
+
+        if len(packetList) >= 4:
+
+            #flags pre prvy packet, [2:] odstrani 0b pri binarnom cisle
+            firstFlags = bin(int(packetList[0].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+
+            firstSyn = int(firstFlags[-2])
+
+            if firstSyn:
+
+                secondFlags = bin(int(packetList[1].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                secondSyn = int(secondFlags[-2])
+
+                if secondSyn:
+
+                    secondAck = int(secondFlags[-5])
+
+                    thirdFlags = bin(int(packetList[2].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                    thirdAck = int(thirdFlags[-5])
+                    
+                    if thirdAck:
+                        if secondAck: return True
+                        
+                        fourthFlags = bin(int(packetList[3].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                        fourthAck = int(fourthFlags[-5])
+
+                        if fourthAck: return True
+
+
+        return False    
+
+    def checkTermination(packetList: list[frame.Frame]):
+        if len(packetList) >= 4:
+
+            #flags pre prvy packet, [2:] odstrani 0b pri binarnom cisle
+            firstFlags = bin(int(packetList[-4].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))
+
+            firstFin = int(firstFlags[-1])
+
+            if firstFin:
+
+                secondFlags = bin(int(packetList[-3].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                secondFin = int(secondFlags[-1])
+                secondAck = int(secondFlags[-5])
+
+                thirdFlags = bin(int(packetList[-2].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                thirdFin = int(thirdFlags[-1])
+                thirdAck = int(thirdFlags[-5])
+
+                fourthFlags = bin(int(packetList[-1].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                fourthAck = int(fourthFlags[-5])
+                
+                
+                if secondFin:
+                    if thirdAck:
+                        if fourthAck: return True
+
+
+                if secondAck:
+                    if thirdFin:
+                        if fourthAck: return True
+
+            #ak je ukoncenie na 3 packety - fin, fin ack, ack
+            firstFlags = bin(int(packetList[-3].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))
+            firstFin = int(firstFlags[-1])
+
+            if firstFin:
+
+                secondFlags = bin(int(packetList[-2].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                secondFin = int(secondFlags[-1])
+                secondAck = int(secondFlags[-5])
+
+                if secondFin and secondAck:
+
+                    thirdFlags = bin(int(packetList[-2].rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+                    thirdAck = int(thirdFlags[-5])
+
+                    if thirdAck: return True
+
+
+
+
+        return False
+
+    def checkRst(packetList: list[frame.Frame]):
+
+        for i, packet in enumerate(packetList):
+            packetFlags = bin(int(packet.rawPacket[12*SIZEOFBYTE:14*SIZEOFBYTE], 16))[2:]
+
+            if int(packetFlags[-3]):
+                
+                #odstrani vsetko za packetom s RST
+                packetList = packetList[:i]
+
+                return True, packetList
+
+
+        return False, packetList
+    
+
+
+    packetList = [packet for packet in packetList if hasattr(packet, "appProtocol") and packet.appProtocol == protocol]
+
+    comms = {}
+    completeComms = {}
+    partialComm = []
+
+    for packet in packetList:
+
+        for key in comms:
+            if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
+                
+                comms[key].append(packet)
+                break
+        
+        else:
+            comms[(packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort)] = [packet]
+
+
+
+
+
+    for key in comms:
+        rstCheck, comms[key] = checkRst(comms[key])
+        if checkOpening and checkTermination(comms[key]) or rstCheck:
+            completeComms[key] = comms[key]
+        else:
+            if not partialComm: partialComm = comms[key]
+    
+
+    tcpWriteYaml(completeComms.values(), partialComm, protocol)
+
+def tcpWriteYaml(comms, partialComm, protocol):
+    yamlFile = open(PCAPFILE[:-5] + "-" + protocol + ".yaml", "w")
+    yaml = YAML()
+
+    data = {'name' : NAME,
+            'pcap_name' : PCAPFILE,
+            "filter_name" : protocol,
+            'complete_comms' : [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
+            }
+
+    yaml.dump(data, yamlFile)
+    yamlFile.write("\n")
+
+    if partialComm:
+        data = {"partial_comms" : [{"number_comms": 1, "packets": [yamlFormat(p) for p in partialComm]}]}
+        yaml.dump(data, yamlFile)
+
+
+    yamlFile.close()
+
 
 
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 #.pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-15.pcap"
+PCAPFILE = "trace-6.pcap"
 
 if __name__ == '__main__':
     #kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
@@ -434,8 +600,9 @@ if __name__ == '__main__':
         defaultWriteYaml(frames)
 
     #niektore prepinace este nefunguju
-    elif selectedProtocol.p == "TCP":
-        print("TCP")
+    elif selectedProtocol.p in ("HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
+        print(selectedProtocol.p)
+        tcpSwitch(frames, selectedProtocol.p)
 
     elif selectedProtocol.p == "TFTP":
         print("TFTP")
