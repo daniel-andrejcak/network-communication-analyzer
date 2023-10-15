@@ -4,7 +4,7 @@ a aby sa to nenachadzalo v subore frame.py, kvoli prehliadnosti"""
 
 from ruamel.yaml import YAML
 
-PROTOCOLSFILE = "protocols.yaml"
+PROTOCOLSFILE = "./Protocols/protocols.yaml"
 
 yaml = YAML()
 

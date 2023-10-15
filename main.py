@@ -159,6 +159,7 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
     yamlFile.close()
 
 
+#______funkcie na vypisy do yaml suboru______
 def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile = open(PCAPFILE[:-5] + "-ARP-output.yaml", "w")
     yaml = YAML()
@@ -195,7 +196,6 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
 
     yamlFile.close()
 
-
 def tftpWriteYaml(comms):
     yamlFile = open(PCAPFILE[:-5] + "-TFTP-output.yaml", "w")
     yaml = YAML()
@@ -210,7 +210,6 @@ def tftpWriteYaml(comms):
 
     yamlFile.close()
 
-
 def icmpWriteYaml(comms, partialComms):
     yamlFile = open(PCAPFILE[:-5] + "-ICMP-output.yaml", "w")
     yaml = YAML()
@@ -221,7 +220,6 @@ def icmpWriteYaml(comms, partialComms):
             }
 
     yaml.dump(data, yamlFile)
-    yamlFile.write("\n")
 
     if comms:
         data = {'complete_comms': [{"number_comm": i+1,
@@ -239,7 +237,6 @@ def icmpWriteYaml(comms, partialComms):
         yaml.dump(data, yamlFile)
 
     yamlFile.close()
-
 
 def tcpWriteYaml(comms, partialComm, protocol):
     yamlFile = open(PCAPFILE[:-5] + "-" + protocol + "-output.yaml", "w")
@@ -262,6 +259,7 @@ def tcpWriteYaml(comms, partialComm, protocol):
     yamlFile.close()
 
 
+#______funkcie na filtrovanie komunikacii______
 def arpSwitch(packetList: list[frame.Frame]):
     completeComms = []
     partialRequestComms = []
@@ -291,7 +289,6 @@ def arpSwitch(packetList: list[frame.Frame]):
                 partialReplyComms.append(packet)
 
     arpWriteYaml(completeComms, partialRequestComms, partialReplyComms)
-
 
 def tftpSwitch(packetList: list[frame.Frame]):
     comms = {}
@@ -373,8 +370,7 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
     tftpWriteYaml(completeComms.values())
 
-
-# komunikaciu spravi podla srcIP dstIP a icmpID, v kazdej komuniakcii robi "pary" req reply podla seq
+# komunikaciu spravi podla srcIP dstIP a icmpID
 def icmpSwitch(packetList: list[frame.Frame]):
 
     comms = {}
@@ -498,7 +494,6 @@ def icmpSwitch(packetList: list[frame.Frame]):
                 partialComms[key].append(pair[0])
 
     icmpWriteYaml(completeComms.values(), partialComms.values())
-
 
 def tcpSwitch(packetList: list[frame.Frame], protocol: str):
 
@@ -661,7 +656,6 @@ NAME = "PKS2023/24"
 # .pcap subor musi byt v rovnakom adresari ako main.py
 PCAPFILE = str
 
-
 if __name__ == '__main__':
     # kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
     parser = argparse.ArgumentParser(description="zvolte prepinac")
@@ -670,9 +664,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    selectedProtocol = args.p if args.p else None
+    selectedProtocol = args.p 
     PCAPFILE = args.fileName
 
+    if selectedProtocol not in ("ARP", "TFTP", "ICMP", "HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
+        print("Podporovane protokoly su ARP, TFTP, ICMP, HTTP, HTTPS, TELNET, SSH, FTP-CONTROL, FTP-DATA")
+
+        exit(1)
 
 
     # nacitanie z pcap suboru
