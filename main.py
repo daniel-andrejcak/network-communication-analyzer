@@ -159,7 +159,7 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
 
 
 def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
-    yamlFile = open(PCAPFILE[:-5] + "-ARP.yaml", "w")
+    yamlFile = open(PCAPFILE[:-5] + "-ARP-output.yaml", "w")
     yaml = YAML()
 
     data = {'name': NAME,
@@ -172,22 +172,22 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
 
     if completeComms:
         data = {'complete_comms': [
-            {"number_comms": 1, "packets": [yamlFormat(p) for p in completeComms]}]}
+            {"number_comm": 1, "packets": [yamlFormat(p) for p in completeComms]}]}
 
         yaml.dump(data, yamlFile)
         yamlFile.write("\n")
 
     if partialRequestComms and not partialReplyComms:
-        data = {"partial_comms": [{"number_comms": 1, "packets": [
+        data = {"partial_comms": [{"number_comm": 1, "packets": [
             yamlFormat(p) for p in partialRequestComms]}]}
 
     elif partialReplyComms and not partialRequestComms:
-        data = {"partial_comms": [{"number_comms": 1, "packets": [
+        data = {"partial_comms": [{"number_comm": 1, "packets": [
             yamlFormat(p) for p in partialReplyComms]}]}
 
     else:
-        data = {"partial_comms": ([{"number_comms": 1, "packets": [yamlFormat(p) for p in partialReplyComms]}], [
-                                  {"number_comms": 2, "packets": [yamlFormat(p) for p in partialReplyComms]}])}
+        data = {"partial_comms": ([{"number_comm": 1, "packets": [yamlFormat(p) for p in partialReplyComms]}], [
+                                  {"number_comm": 2, "packets": [yamlFormat(p) for p in partialReplyComms]}])}
 
     yaml.dump(data, yamlFile)
     yamlFile.write("\n")
@@ -196,13 +196,13 @@ def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
 
 
 def tftpWriteYaml(comms):
-    yamlFile = open(PCAPFILE[:-5] + "-TFTP.yaml", "w")
+    yamlFile = open(PCAPFILE[:-5] + "-TFTP-output.yaml", "w")
     yaml = YAML()
 
     data = {'name': NAME,
             'pcap_name': PCAPFILE,
             "filter_name": "TFTP",
-            'complete_comms': [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
+            'complete_comms': [{"number_comm": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
             }
 
     yaml.dump(data, yamlFile)
@@ -211,7 +211,7 @@ def tftpWriteYaml(comms):
 
 
 def icmpWriteYaml(comms, partialComms):
-    yamlFile = open(PCAPFILE[:-5] + "-ICMP.yaml", "w")
+    yamlFile = open(PCAPFILE[:-5] + "-ICMP-output.yaml", "w")
     yaml = YAML()
 
     data = {'name': NAME,
@@ -223,7 +223,7 @@ def icmpWriteYaml(comms, partialComms):
     yamlFile.write("\n")
 
     if comms:
-        data = {'complete_comms': [{"number_comms": i+1,
+        data = {'complete_comms': [{"number_comm": i+1,
                                     "src_comm": list(comms)[0][0].srcIP,
                                     "dst_comm": list(comms)[0][0].dstIP,
                                     "packets": [yamlFormat(p, "ICMPcomplete") for p in com]} for i, com in enumerate(comms)]}
@@ -241,13 +241,13 @@ def icmpWriteYaml(comms, partialComms):
 
 
 def tcpWriteYaml(comms, partialComm, protocol):
-    yamlFile = open(PCAPFILE[:-5] + "-" + protocol + ".yaml", "w")
+    yamlFile = open(PCAPFILE[:-5] + "-" + protocol + "-output.yaml", "w")
     yaml = YAML()
 
     data = {'name': NAME,
             'pcap_name': PCAPFILE,
             "filter_name": protocol,
-            'complete_comms': [{"number_comms": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
+            'complete_comms': [{"number_comm": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
             }
 
     yaml.dump(data, yamlFile)
@@ -255,7 +255,7 @@ def tcpWriteYaml(comms, partialComm, protocol):
 
     if partialComm:
         data = {"partial_comms": [
-            {"number_comms": 1, "packets": [yamlFormat(p) for p in partialComm]}]}
+            {"number_comm": 1, "packets": [yamlFormat(p) for p in partialComm]}]}
         yaml.dump(data, yamlFile)
 
     yamlFile.close()
@@ -634,7 +634,7 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
 
     # ak existuju partial communications, tak vyber prvu
     if comms:
-        partialComm = comms[comms.keys()[0]]
+        partialComm = list(comms.values())[0]
 
     tcpWriteYaml(completeComms, partialComm, protocol)
 
@@ -642,37 +642,43 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
 SIZEOFBYTE = 2
 NAME = "PKS2023/24"
 # .pcap subor musi byt v rovnakom adresari ako main.py
-PCAPFILE = "trace-26.pcap"
+PCAPFILE = str
 
 
 if __name__ == '__main__':
     # kod potrebny na fungovanie prepinaca -p !!!este nepouzivat
     parser = argparse.ArgumentParser(description="zvolte prepinac")
     parser.add_argument("-p", type=str)
+    parser.add_argument("fileName", type=str)
 
-    selectedProtocol = parser.parse_args()
+    args = parser.parse_args()
+
+    selectedProtocol = args.p if args.p else None
+    PCAPFILE = args.fileName
+
+
 
     # nacitanie z pcap suboru
-    frames = loadFrames(selectedProtocol.p)
+    frames = loadFrames(selectedProtocol)
 
     # vypis do yaml
-    if selectedProtocol.p is None:
+    if selectedProtocol is None:
         print("standard yaml output")
         defaultWriteYaml(frames)
 
     # niektore prepinace este nefunguju
-    elif selectedProtocol.p in ("HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
-        print(selectedProtocol.p)
-        tcpSwitch(frames, selectedProtocol.p)
+    elif selectedProtocol in ("HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
+        print(selectedProtocol)
+        tcpSwitch(frames, selectedProtocol)
 
-    elif selectedProtocol.p == "TFTP":
+    elif selectedProtocol == "TFTP":
         print("TFTP")
         tftpSwitch(frames)
 
-    elif selectedProtocol.p == "ICMP":
+    elif selectedProtocol == "ICMP":
         print("ICMP")
         icmpSwitch(frames)
 
-    elif selectedProtocol.p == "ARP":
+    elif selectedProtocol == "ARP":
         print("ARP switch")
         arpSwitch(frames)
