@@ -30,9 +30,10 @@ def loadFrames(switch=None):
             if not (hasattr(ramec, "protocol") and ramec.protocol == "UDP"):
                 continue
 
-        elif switch:
+        elif switch in ("HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
             if not (hasattr(ramec, "appProtocol") and ramec.appProtocol == switch):
                 continue
+
 
         formatedFrameList.append(ramec)
 
@@ -606,6 +607,20 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
 
                                 break
 
+            #specialny pripad, ked sa komunikacia ukonci FIN, FIN+ACK, ACK a pride este 1 ACK
+            else:
+                if completeComms and packet.srcIP == completeComms[-1][-2].srcIP and packet.dstIP == completeComms[-1][-2].dstIP and checkFin(completeComms[-1][-2]) and checkAck(completeComms[-1][-2]) and checkAck(completeComms[-1][-1]):
+
+                    for key in comms:
+                        if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort} and len(comms[key]) == 1:
+                    
+                            comms.pop(key)
+                
+                            completeComms[-1].append(packet)  
+
+                            break  
+                
+
         if checkFin(packet):
             for key in validateComms:
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
@@ -631,6 +646,8 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
                         validateComms.pop(key)
 
                     break
+
+
 
     # ak existuju partial communications, tak vyber prvu
     if comms:
