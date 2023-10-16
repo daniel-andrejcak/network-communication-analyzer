@@ -21,7 +21,7 @@ class Frame:
     def makeHexFrame(self): 
         self.hexFrame = [self.rawPacket[i:i+2] for i in range(0, len(self.rawPacket), 2)]
         self.hexFrame = '\n'.join([' '.join(self.hexFrame[i:i+16]) for i in range(0, len(self.hexFrame), 16)])
-        self.hexFrame += "\n" #musi tu byt lebo ho pojebe inak
+        self.hexFrame += "\n" 
 
         self.hexFrame = self.hexFrame.upper()
 
