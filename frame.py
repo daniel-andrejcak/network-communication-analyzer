@@ -113,7 +113,7 @@ class Frame:
         tempSrcIP = self.rawPacket[12*SIZEOFBYTE:16*SIZEOFBYTE]
         tempDstIP = self.rawPacket[16*SIZEOFBYTE:20*SIZEOFBYTE]
 
-        self.ipv4Flags()
+        self.getIPv4Flags()
 
         #odstrani ip header, ktory moze byt od 20B do 60B
         headerLength = 4*int(self.rawPacket[1], 16)
@@ -198,7 +198,7 @@ class Frame:
             self.icmpType = "Destination unreachable"
 
     #pre icmp filter vytvori atributy identifier mf_flags a frag_offset
-    def ipv4Flags(self):
+    def getIPv4Flags(self):
         #[2:] da prec 0b pred binary stringom
 
         self.identifier = int(self.rawPacket[4*SIZEOFBYTE:6*SIZEOFBYTE], 16)

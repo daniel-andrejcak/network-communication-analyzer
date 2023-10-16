@@ -244,12 +244,15 @@ def tcpWriteYaml(comms, partialComm, protocol):
 
     data = {'name': NAME,
             'pcap_name': PCAPFILE,
-            "filter_name": protocol,
-            'complete_comms': [{"number_comm": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]
-            }
-
+            "filter_name": protocol}
+    
     yaml.dump(data, yamlFile)
-    yamlFile.write("\n")
+
+    if comms:
+        data = {'complete_comms': [{"number_comm": i+1, "packets": [yamlFormat(p) for p in com]} for i, com in enumerate(comms)]}
+        yaml.dump(data, yamlFile)
+        yamlFile.write("\n")
+
 
     if partialComm:
         data = {"partial_comms": [
@@ -553,54 +556,60 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
         else:
             comms[(packet.srcIP, packet.dstIP,
                    packet.srcPort, packet.dstPort)] = [packet]
+            
+            validateComms[(packet.srcIP, packet.dstIP,
+                   packet.srcPort, packet.dstPort)] = [False, False, False, False, False, False, False, False]
 
         if checkSyn(packet):
             for key in validateComms:
-                # druhy syn, ktory sa posle pri otvarani komunikacie
-                if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort} and validateComms[key][0] == True and validateComms[key][1] == False:
+                if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
+                    
+                    # prvy syn, ktory sa posle pri otvarani komunikacie
+                    if validateComms[key][0] == False:
+                        validateComms[key][0] = True
 
-                    validateComms[key][1] = True
+                    # druhy syn, ktory sa posle pri otvarani komunikacie
+                    elif validateComms[key][0] == True and validateComms[key][1] == False:
+
+                        validateComms[key][1] = True
+
                     break
 
-            # prvy syn, ktory sa posle pri otvarani komunikacie
-            else:
-                validateComms[(packet.srcIP, packet.dstIP,
-                               packet.srcPort, packet.dstPort)] = [True, False, False, False, False, False, False, False]
 
         if checkAck(packet):
             for key in validateComms:
                 # druhy syn, ktory sa posle pri otvarani komunikacie
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
 
-                    if validateComms[key][0] == True:
-                        # prvy ack, ktory sa posle pri otvarani komunikacie
-                        if validateComms[key][2] == False:
+                    # prvy ack, ktory sa posle pri otvarani komunikacie
+                    if validateComms[key][0] == True and validateComms[key][2] == False:
 
-                            validateComms[key][2] = True
-                            break
+                        validateComms[key][2] = True
+                        break
 
-                        # druhy ack, ktory sa posle pri otvarani komunikacie - musi byt poslany aj druhy syn
-                        elif validateComms[key][1] == True and validateComms[key][3] == False:
+                    # druhy ack, ktory sa posle pri otvarani komunikacie - musi byt poslany aj druhy syn
+                    elif validateComms[key][1] == True and validateComms[key][3] == False:
 
-                            validateComms[key][3] = True
-                            break
+                        validateComms[key][3] = True
+                        break
 
-                        elif validateComms[key][4] == True:
-                            # prvy ack, ktory sa posle pri uzavreti komunikacie
-                            if validateComms[key][5] == False:
+                    # prvy ack, ktory sa posle pri uzavreti komunikacie
+                    elif validateComms[key][4] == True and validateComms[key][6] == False:
 
-                                validateComms[key][6] = True
-                                break
+                        validateComms[key][6] = True
+                        break
 
-                            # druhy ack, ktory sa posle pri uzavrati komunikacie
-                            elif validateComms[key][5] == True:
+                    # druhy ack, ktory sa posle pri uzavrati komunikacie
+                    elif validateComms[key][5] == True and validateComms[key][7] == False:
 
-                                validateComms[key][7] = True
-                                # komunikacia bola uspesne uzavreta, tak sa moze presunut do complete communications
-                                completeComms.append(comms.pop(key))
-                                validateComms.pop(key)
+                        validateComms[key][7] = True
+                        # komunikacia bola uspesne uzavreta, tak sa moze presunut do complete communications
+                        if all(validateComms[key]):
+                            completeComms.append(comms.pop(key))
+                            validateComms.pop(key)
 
-                                break
+                        break
+
 
             #specialny pripad, ked sa komunikacia ukonci FIN, FIN+ACK, ACK a pride este 1 ACK
             else:
@@ -620,15 +629,15 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
             for key in validateComms:
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
 
-                    # najprv overi ci bola komuniakcia uspesne otvorena
-                    if all(validateComms[key][:4]):
-                        if validateComms[key][4] == False:
-                            # prvy fin, ktory sa posle pri uzatvarani komunikacie
-                            validateComms[key][4] = True
+                    
+                    if validateComms[key][4] == False:
+                        # prvy fin, ktory sa posle pri uzatvarani komunikacie
+                        validateComms[key][4] = True
 
-                        elif validateComms[key][4] == True and validateComms[key][6] == True:
-                            # druhy fin, ktory sa posle pri uzatvarani komunikacie
-                            validateComms[key][5] = True
+                    elif validateComms[key][4] == True and validateComms[key][6] == True:
+                        # druhy fin, ktory sa posle pri uzatvarani komunikacie
+                        validateComms[key][5] = True
+
 
         if checkRst(packet):
             for key in validateComms:
@@ -640,13 +649,21 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
                         completeComms.append(comms.pop(key))
                         validateComms.pop(key)
 
+                    else:
+                        #ak komunikacia nebola otvorena, ale iba uzavreta pomocou RST
+                        validateComms[key][4:] = [True, True, True, True]
+
+
                     break
 
 
 
-    # ak existuju partial communications, tak vyber prvu
-    if comms:
-        partialComm = list(comms.values())[0]
+    #najde prvu komunikaciu, ktora je iba otvorena, alebo iba ukoncena
+    for key in validateComms:
+        if all(validateComms[key][:4]) or all(validateComms[key][4:]):
+            partialComm = comms[key]
+
+            break    
 
     tcpWriteYaml(completeComms, partialComm, protocol)
 
@@ -667,7 +684,7 @@ if __name__ == '__main__':
     selectedProtocol = args.p 
     PCAPFILE = args.fileName
 
-    if selectedProtocol not in ("ARP", "TFTP", "ICMP", "HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
+    if selectedProtocol not in (None, "ARP", "TFTP", "ICMP", "HTTP", "HTTPS", "TELNET", "SSH", "FTP-CONTROL", "FTP-DATA"):
         print("Podporovane protokoly su ARP, TFTP, ICMP, HTTP, HTTPS, TELNET, SSH, FTP-CONTROL, FTP-DATA")
 
         exit(1)
