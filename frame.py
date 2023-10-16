@@ -54,7 +54,7 @@ class Frame:
 
         else:
             #pole length uz netreba, preto sa odstrani
-            self.rawPacket = self.rawPacket[2*SIZEOFBYTE:] #
+            self.rawPacket = self.rawPacket[2*SIZEOFBYTE:]
 
             self.frameType = "IEEE 802.3"
             self.determineIEEE()
@@ -177,8 +177,8 @@ class Frame:
             self.appProtocol = protocols["udp_protocol"][self.dstPort]
 
 
+    #doplnenie opcode do ARP packetov
     def getOpCode(self):
-        #doplnenie opcode do ARP packetov
         if int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0001:
                 self.opCode = "REQUEST"
         elif int(self.rawPacket[6*SIZEOFBYTE:8*SIZEOFBYTE]) == 0x0002:
@@ -188,7 +188,7 @@ class Frame:
     def getIcmpType(self):
         self.icmpType = self.rawPacket[:SIZEOFBYTE]
 
-        if int(self.rawPacket[:SIZEOFBYTE], 16) == 0:
+        if int(self.rawPacket[:SIZEOFBYTE], 16) == 0x00:
             self.icmpType = "ECHO REPLY"
         elif int(self.rawPacket[:SIZEOFBYTE], 16) == 0x08:
             self.icmpType = "ECHO REQUEST"
@@ -197,7 +197,7 @@ class Frame:
         elif int(self.rawPacket[:SIZEOFBYTE], 16) == 0x03:
             self.icmpType = "Destination unreachable"
 
-    #pre icmp filter vytvori atributy identifier mf_flags a frag_offset
+    #vytvori atributy identifier mf_flags a frag_offset
     def getIPv4Flags(self):
         #[2:] da prec 0b pred binary stringom
 

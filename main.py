@@ -15,6 +15,7 @@ def loadFrames(switch=None):
 
         # vola sa ramec, pretoze frame uz je zabrate
         ramec = frame.Frame(i+1, frameList[i])
+        
 
         # ak je zapnuty prepinac -p, tak to prida do zoznamu iba pozadovane ramce
         if switch == "ARP":
@@ -128,10 +129,9 @@ def IPv4Senders(packetList: list[frame.Frame]):
 
     return uniqueSenders, addrForMaxPacketSent
 
-
-# zapisanie do suboru yaml
+#______funkcie na vypisy do yaml suboru______
 # ak je subor spusteny bez prepinaca - uloha 1. - 3.
-def defaultWriteYaml(frameList: list[frame.Frame]):
+def defaultWriteYaml(frameList):
     yamlFile = open(PCAPFILE[:-5] + "-output.yaml", "w")
     yaml = YAML()
 
@@ -158,8 +158,6 @@ def defaultWriteYaml(frameList: list[frame.Frame]):
 
     yamlFile.close()
 
-
-#______funkcie na vypisy do yaml suboru______
 def arpWriteYaml(completeComms, partialRequestComms, partialReplyComms):
     yamlFile = open(PCAPFILE[:-5] + "-ARP-output.yaml", "w")
     yaml = YAML()
@@ -316,7 +314,7 @@ def tftpSwitch(packetList: list[frame.Frame]):
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
                     comms[key].append(packet)
 
-        # ak je opCode 0x04 - acknowledgment
+        # ak je opCode 0x04 - acknowledgement
         elif packet.opCode == 0x04:
             # najde, ci existuje otvorena komunikacia do ktorej by ho mal pridat
             for key in comms.keys():
@@ -368,8 +366,8 @@ def tftpSwitch(packetList: list[frame.Frame]):
 
                 if comms[key][1].opCode == 0x03 and comms[key][2].opCode == 0x04 or comms[key][2].opCode == 0x03 and comms[key][3].opCode == 0x04:
 
-                    completeComms[key] = comms.pop(key)
-                    break
+                    completeComms[key] = comms[key]
+
 
     tftpWriteYaml(completeComms.values())
 
@@ -394,8 +392,7 @@ def icmpSwitch(packetList: list[frame.Frame]):
 
         # ak ma fragment nejaky offset, tak sa pokusi najst k nemu prvu cast a prepisat udaje o ICMP
         if packet.frag_offset:
-            fragment = [fragment for fragment in mfPackets if packet.srcIP ==
-                        fragment.srcIP and packet.dstIP == fragment.dstIP and packet.identifier == fragment.identifier]
+            fragment = [fragment for fragment in mfPackets if packet.srcIP == fragment.srcIP and packet.dstIP == fragment.dstIP and packet.identifier == fragment.identifier]
 
             if fragment:
                 fragment = fragment[0]
@@ -412,16 +409,14 @@ def icmpSwitch(packetList: list[frame.Frame]):
         if packet.icmpType == "ECHO REQUEST":
 
             if packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId) not in comms:
-                comms[packet.srcIP + ' ' + packet.dstIP +
-                      ' ' + str(packet.icmpId)] = [[packet]]
+                comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId)] = [[packet]]
 
                 continue
 
             else:
                 # ak je to fragment, tak ho prida k povodne najdenemu ECHO REQUEST
                 if packet.frag_offset:
-                    previousFragment = [pair for pair in comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(
-                        packet.icmpId)] if pair[-1].identifier == packet.identifier][0]
+                    previousFragment = [pair for pair in comms[packet.srcIP + ' ' + packet.dstIP + ' ' + str(packet.icmpId)] if pair[-1].identifier == packet.identifier][0]
 
                     previousFragment.append(packet)
 
@@ -438,8 +433,7 @@ def icmpSwitch(packetList: list[frame.Frame]):
 
             # pokusi sa najst request k reply na zaklade identifier a sequence
             else:
-                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP +
-                                               ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
+                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
 
                 if pair:
                     pair.append(packet)
@@ -450,28 +444,26 @@ def icmpSwitch(packetList: list[frame.Frame]):
         elif packet.icmpType == "Time exceeded":
 
             # srcIP, identifier a sequence to musi zobrat z encapsulated icmp
-            packet.srcIP = packet.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
-            packet.srcIP = '.'.join(
-                [str(int(packet.srcIP[i:i+2], 16)) for i in range(0, len(packet.srcIP), 2)])
+            tempSrcIP = packet.rawPacket[24*SIZEOFBYTE:28*SIZEOFBYTE]
+            tempSrcIP = '.'.join([str(int(tempSrcIP[i:i+2], 16)) for i in range(0, len(tempSrcIP), 2)])
 
             packet.icmpId = int(
                 packet.rawPacket[32*SIZEOFBYTE:34*SIZEOFBYTE], 16)
 
             packet.seq = int(packet.rawPacket[34*SIZEOFBYTE:36*SIZEOFBYTE], 16)
 
-            if packet.dstIP + ' ' + packet.srcIP + ' ' + str(packet.icmpId) not in comms:
+            if packet.dstIP + ' ' + tempSrcIP + ' ' + str(packet.icmpId) not in comms:
 
-                placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+                placeInPartialComms(packet, packet.dstIP, tempSrcIP)
 
             # pokusi sa najst request ku time exceeded na zaklade identifier a sequence
             else:
-                pair = [pair for pair in comms[packet.dstIP + ' ' + packet.srcIP +
-                                               ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
+                pair = [pair for pair in comms[packet.dstIP + ' ' + tempSrcIP + ' ' + str(packet.icmpId)] if pair[0].seq == packet.seq][0]
 
                 if pair:
                     pair.append(packet)
                 else:
-                    placeInPartialComms(packet, packet.dstIP, packet.srcIP)
+                    placeInPartialComms(packet, packet.dstIP, tempSrcIP)
 
         # ostatne typy icmp idu do partial communications
         else:
@@ -560,6 +552,7 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
             validateComms[(packet.srcIP, packet.dstIP,
                    packet.srcPort, packet.dstPort)] = [False, False, False, False, False, False, False, False]
 
+        #kontrola flagov
         if checkSyn(packet):
             for key in validateComms:
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
@@ -574,7 +567,6 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
                         validateComms[key][1] = True
 
                     break
-
 
         if checkAck(packet):
             for key in validateComms:
@@ -624,7 +616,6 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
 
                             break  
                 
-
         if checkFin(packet):
             for key in validateComms:
                 if set(key) == {packet.srcIP, packet.dstIP, packet.srcPort, packet.dstPort}:
@@ -637,7 +628,6 @@ def tcpSwitch(packetList: list[frame.Frame], protocol: str):
                     elif validateComms[key][4] == True and validateComms[key][6] == True:
                         # druhy fin, ktory sa posle pri uzatvarani komunikacie
                         validateComms[key][5] = True
-
 
         if checkRst(packet):
             for key in validateComms:
